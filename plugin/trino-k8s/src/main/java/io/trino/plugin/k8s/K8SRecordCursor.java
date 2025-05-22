@@ -15,7 +15,6 @@ package io.trino.plugin.k8s;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableList;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
@@ -36,11 +35,9 @@ import static java.util.Objects.requireNonNull;
 import io.trino.spi.type.StandardTypes;
 import io.trino.spi.type.TypeSignature;
 import io.trino.spi.type.TypeManager;
-import io.trino.spi.type.TypeSignatureParameter;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.lang.reflect.Field;
 
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
@@ -68,7 +65,7 @@ public class K8SRecordCursor
         this.typeManager = typeManager;
         this.values = values;
         this.types = types;
-        
+
         // Get the rows for this table
         this.rows = k8sClient.getResourceAsList(schemaName, tableName);
     }
@@ -82,20 +79,20 @@ public class K8SRecordCursor
         }
 
         Map<String, Object> row = rows.get(currentPosition);
-        
+
         // Create a block for each column
         Block[] blocks = new Block[columnHandles.size()];
-        
+
         for (int i = 0; i < columnHandles.size(); i++) {
             K8SColumnHandle columnHandle = columnHandles.get(i);
             Type type = columnHandle.getColumnType();
             Object value = row.get(columnHandle.getColumnName());
-            
+
             if (value == null) {
                 blocks[i] = null;
                 continue;
             }
-            
+
             if (type instanceof RowType rowType) {
                 try {
                     BlockBuilder blockBuilder = rowType.createBlockBuilder(null, 1);
@@ -119,7 +116,7 @@ public class K8SRecordCursor
                 blocks[i] = blockBuilder.build();
             }
         }
-        
+
         // Store the blocks for this row
         currentBlocks = blocks;
         return true;
@@ -130,11 +127,11 @@ public class K8SRecordCursor
         if (obj == null) {
             return null;
         }
-        
+
         if (obj instanceof Map) {
             return ((Map<?, ?>) obj).get(fieldName);
         }
-        
+
         try {
             // Try to get the field using reflection
             Field field = obj.getClass().getDeclaredField(fieldName);
@@ -241,7 +238,7 @@ public class K8SRecordCursor
                     list = List.of(value);
                 }
             }
-            
+
             final List<?> finalList = list;
             ((ArrayBlockBuilder) builder).buildEntry(elementBuilder -> {
                 for (Object element : finalList) {
@@ -330,7 +327,7 @@ public class K8SRecordCursor
             VARCHAR.writeSlice(builder, Slices.utf8Slice(value.toString()));
         }
     }
-    
+
     private Type getJsonMapType()
     {
         return typeManager.getType(new TypeSignature(StandardTypes.JSON));
@@ -348,12 +345,12 @@ public class K8SRecordCursor
         if (currentBlocks[field] == null) {
             return false;
         }
-        
+
         Type type = columnHandles.get(field).getColumnType();
         if (type.equals(BOOLEAN)) {
             return type.getBoolean(currentBlocks[field], 0);
         }
-        
+
         throw new TrinoException(GENERIC_INTERNAL_ERROR, "Type " + type + " does not support getBoolean");
     }
 
@@ -363,12 +360,12 @@ public class K8SRecordCursor
         if (currentBlocks[field] == null) {
             return 0;
         }
-        
+
         Type type = columnHandles.get(field).getColumnType();
         if (type.equals(INTEGER)) {
             return type.getLong(currentBlocks[field], 0);
         }
-        
+
         throw new TrinoException(GENERIC_INTERNAL_ERROR, "Type " + type + " does not support getLong");
     }
 
@@ -378,12 +375,12 @@ public class K8SRecordCursor
         if (currentBlocks[field] == null) {
             return 0.0;
         }
-        
+
         Type type = columnHandles.get(field).getColumnType();
         if (type.equals(DOUBLE)) {
             return type.getDouble(currentBlocks[field], 0);
         }
-        
+
         throw new TrinoException(GENERIC_INTERNAL_ERROR, "Type " + type + " does not support getDouble");
     }
 
@@ -393,23 +390,24 @@ public class K8SRecordCursor
         if (currentBlocks[field] == null) {
             return null;
         }
-        
+
         Type type = columnHandles.get(field).getColumnType();
         if (type.equals(VARCHAR) || type.equals(VARBINARY)) {
             return type.getSlice(currentBlocks[field], 0);
         }
-        
-        // Handle JSON type by returning string value directly
+
+        // Handle JSON type by converting to string representation
         if (type.equals(getJsonMapType())) {
             try {
-                String value = type.getSlice(currentBlocks[field], 0).toStringUtf8();
-                return Slices.utf8Slice(value);
+                Object value = type.getObject(currentBlocks[field], 0);
+                String jsonString = objectMapper.writeValueAsString(value);
+                return Slices.utf8Slice(jsonString);
             }
             catch (Exception e) {
-                throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to get JSON string value", e);
+                throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to convert JSON to string", e);
             }
         }
-        
+
         throw new TrinoException(GENERIC_INTERNAL_ERROR, "Type " + type + " does not support getSlice");
     }
 
@@ -419,12 +417,12 @@ public class K8SRecordCursor
         if (currentBlocks[field] == null) {
             return null;
         }
-        
+
         Type type = columnHandles.get(field).getColumnType();
         if (type instanceof RowType || type instanceof ArrayType) {
             return type.getObject(currentBlocks[field], 0);
         }
-        
+
         throw new TrinoException(GENERIC_INTERNAL_ERROR, "Type " + type + " does not support getObject");
     }
 

@@ -13,33 +13,30 @@
  */
 package io.trino.plugin.k8s;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.util.Config;
 import io.kubernetes.client.util.KubeConfig;
-import io.kubernetes.client.openapi.apis.ApiextensionsV1Api;
-import io.kubernetes.client.openapi.models.V1CustomResourceDefinition;
-import io.kubernetes.client.openapi.models.V1CustomResourceDefinitionList;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.models.V1PodList;
 import io.kubernetes.client.openapi.models.V1ServiceList;
-import io.kubernetes.client.openapi.models.V1Service;
-import io.kubernetes.client.openapi.models.V1ObjectMeta;
-import io.kubernetes.client.openapi.models.V1ServiceSpec;
-import io.kubernetes.client.openapi.models.V1ServiceStatus;
 import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.models.V1DeploymentList;
-import io.kubernetes.client.openapi.ApiException;
-import io.kubernetes.client.openapi.Configuration;
-import io.kubernetes.client.openapi.apis.CustomObjectsApi;
-import io.kubernetes.client.openapi.models.V1Status;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinition;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinitionList;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinitionVersion;
+import io.kubernetes.client.openapi.models.V1JSONSchemaProps;
+import io.kubernetes.client.util.generic.GenericKubernetesApi;
+import io.kubernetes.client.util.generic.KubernetesApiResponse;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesListObject;
 
 import io.trino.spi.TrinoException;
 import io.trino.spi.type.Type;
@@ -61,13 +58,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Optional;
-import java.util.Iterator;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.stream.Collectors;
 
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static java.util.Objects.requireNonNull;
 
@@ -100,34 +95,22 @@ import io.kubernetes.client.openapi.models.V1NamespaceList;
 import io.kubernetes.client.openapi.models.CoreV1EventList;
 import io.kubernetes.client.openapi.models.V1ResourceQuotaList;
 import io.kubernetes.client.openapi.models.V1LimitRangeList;
-import io.kubernetes.client.openapi.models.V1ReplicaSet;
 import io.kubernetes.client.openapi.models.V1ReplicaSetList;
-import io.kubernetes.client.openapi.models.V1StatefulSet;
 import io.kubernetes.client.openapi.models.V1StatefulSetList;
-import io.kubernetes.client.openapi.models.V1DaemonSet;
 import io.kubernetes.client.openapi.models.V1DaemonSetList;
-import io.kubernetes.client.openapi.models.V1Job;
-import io.kubernetes.client.openapi.models.V1CronJob;
-import io.kubernetes.client.openapi.models.V1ConfigMap;
-import io.kubernetes.client.openapi.models.V1Secret;
-import io.kubernetes.client.openapi.models.V1PersistentVolumeClaim;
-import io.kubernetes.client.openapi.models.V1HorizontalPodAutoscaler;
-import io.kubernetes.client.openapi.models.V1Ingress;
-import io.kubernetes.client.openapi.models.V1NetworkPolicy;
-import io.kubernetes.client.openapi.models.V1RoleBinding;
-import io.kubernetes.client.openapi.models.V1Role;
-import io.kubernetes.client.openapi.models.V1ServiceAccount;
-import io.kubernetes.client.openapi.models.V1Endpoints;
-import io.kubernetes.client.openapi.models.V1Node;
-import io.kubernetes.client.openapi.models.V1PersistentVolume;
-import io.kubernetes.client.openapi.models.V1Namespace;
-import io.kubernetes.client.openapi.models.V1ResourceQuota;
-import io.kubernetes.client.openapi.models.V1LimitRange;
+
 import java.util.Date;
 import java.util.Arrays;
+import io.kubernetes.client.openapi.apis.ApiextensionsV1Api;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinition;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinitionList;
+import io.kubernetes.client.openapi.models.V1CustomResourceDefinitionVersion;
 import io.kubernetes.client.openapi.models.V1JSONSchemaProps;
-import io.trino.spi.type.JsonType;
-import static java.lang.String.format;
+import io.kubernetes.client.util.generic.GenericKubernetesApi;
+import io.kubernetes.client.util.generic.KubernetesApiResponse;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject;
+import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesListObject;
 
 public class K8SClient
 {
@@ -136,11 +119,24 @@ public class K8SClient
     private final Map<String, RowType> resourceTypes = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
     private static final Set<String> NAMESPACED_RESOURCES = ImmutableSet.of(
-            "pods", "services", "deployments", "replicasets", "statefulsets",
-            "daemonsets", "jobs", "cronjobs", "configmaps", "secrets",
-            "persistentvolumeclaims", "horizontalpodautoscalers", "ingresses",
-            "networkpolicies", "rolebindings", "roles", "serviceaccounts",
-            "endpoints", "resourcequotas", "limitranges");
+            "pods",
+            "services",
+            "deployments",
+            "replicasets",
+            "statefulsets",
+            "daemonsets",
+            "jobs",
+            "cronjobs",
+            "configmaps",
+            "secrets",
+            "persistentvolumeclaims",
+            "horizontalpodautoscalers",
+            "ingresses",
+            "networkpolicies",
+            "rolebindings",
+            "roles",
+            "serviceaccounts",
+            "endpoints");
 
     private static final Set<String> CLUSTER_SCOPED_RESOURCES = ImmutableSet.of(
             "nodes",
@@ -190,22 +186,33 @@ public class K8SClient
             tables.put(resource, new K8STable(resource, getTableColumns(context, resource), ImmutableList.of()));
         }
 
-        // Add CRDs
+        // Add Custom Resource tables
         try {
             ApiClient client = getClientForContext(context);
             ApiextensionsV1Api apiExtensionsApi = new ApiextensionsV1Api(client);
             V1CustomResourceDefinitionList crdList = apiExtensionsApi.listCustomResourceDefinition(null, null, null, null, null, null, null, null, null, null);
-            
+
             for (V1CustomResourceDefinition crd : crdList.getItems()) {
-                K8sOpenApiSchema schema = extractSchemaFromCrd(crd);
-                if (schema != null) {
-                    K8STable table = K8STable.fromCrd(crd, schema);
-                    tables.put(table.getName(), table);
+                String group = crd.getSpec().getGroup();
+                String kind = crd.getSpec().getNames().getKind().toLowerCase();
+                    String plural = crd.getSpec().getNames().getPlural();
+                    String tableName = kind + "_" + group.replace('.', '_');
+
+                // Get the latest version
+                String version = crd.getSpec().getVersions().stream()
+                    .filter(V1CustomResourceDefinitionVersion::getServed)
+                    .map(V1CustomResourceDefinitionVersion::getName)
+                    .findFirst()
+                    .orElse(null);
+
+                if (version != null) {
+                    tables.put(tableName, new K8STable(tableName, getCRDColumns(crd, version), ImmutableList.of()));
                 }
             }
         }
         catch (ApiException e) {
-            handleApiException(e, "list CRDs");
+            // Log error but continue with standard resources
+            System.err.println("Failed to list CRDs: " + e.getMessage());
         }
 
         return tables.buildOrThrow();
@@ -245,6 +252,198 @@ public class K8SClient
         return columns.build();
     }
 
+    private List<K8SColumn> getCRDColumns(V1CustomResourceDefinition crd, String version) {
+        ImmutableList.Builder<K8SColumn> columns = ImmutableList.builder();
+        Set<String> addedColumns = new HashSet<>();
+
+        // Add standard metadata columns
+        columns.add(new K8SColumn("name", VARCHAR));
+        addedColumns.add("name");
+
+        if (crd.getSpec().getScope().equals("Namespaced")) {
+            columns.add(new K8SColumn("namespace", VARCHAR));
+            addedColumns.add("namespace");
+        }
+
+        // Add standard metadata fields
+        columns.add(new K8SColumn("creation_timestamp", typeManager.getType(new TypeSignature("timestamp"))));
+        addedColumns.add("creation_timestamp");
+        columns.add(new K8SColumn("uid", VARCHAR));
+        addedColumns.add("uid");
+        columns.add(new K8SColumn("resource_version", VARCHAR));
+        addedColumns.add("resource_version");
+
+        try {
+            // Create a RowType from the CRD schema
+            RowType crdRowType = createRowTypeFromCRDSchema(crd, version);
+
+            // Add fields from the CRD row type
+            for (RowType.Field field : crdRowType.getFields()) {
+                String fieldName = field.getName().orElse("field");
+                if (!addedColumns.contains(fieldName)) {
+                    columns.add(new K8SColumn(fieldName, field.getType()));
+                    addedColumns.add(fieldName);
+                }
+            }
+        } catch (Exception e) {
+            // Log error but continue with standard fields
+            System.err.println("Failed to extract schema from CRD: " + e.getMessage());
+        }
+
+        return columns.build();
+    }
+
+    private RowType createRowTypeFromCRDSchema(V1CustomResourceDefinition crd, String version) {
+        ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
+
+        // Get schema from the CRD spec
+        V1CustomResourceDefinitionVersion versionSpec = crd.getSpec().getVersions().stream()
+            .filter(v -> v.getName().equals(version))
+            .findFirst()
+            .orElse(null);
+
+        if (versionSpec != null && versionSpec.getSchema() != null && versionSpec.getSchema().getOpenAPIV3Schema() != null) {
+            V1JSONSchemaProps schema = versionSpec.getSchema().getOpenAPIV3Schema();
+            processOpenAPISchema(schema, fields);
+        }
+
+        return RowType.from(fields.build());
+    }
+
+    private void processOpenAPISchema(V1JSONSchemaProps schema, ImmutableList.Builder<RowType.Field> fields) {
+        if (schema == null || schema.getProperties() == null) {
+            return;
+        }
+
+        // Process top-level properties (usually metadata, spec, status)
+        Map<String, V1JSONSchemaProps> properties = schema.getProperties();
+
+        // Process spec field
+        if (properties.containsKey("spec")) {
+            processFieldProperties(properties.get("spec"), "spec", fields);
+        }
+
+        // Process status field
+        if (properties.containsKey("status")) {
+            processFieldProperties(properties.get("status"), "status", fields);
+        }
+    }
+
+    private void processFieldProperties(V1JSONSchemaProps fieldSchema, String prefix, ImmutableList.Builder<RowType.Field> fields) {
+        if (fieldSchema == null || fieldSchema.getProperties() == null) {
+            // If the field has no defined properties, add it as a JSON type
+            fields.add(new RowType.Field(Optional.of(prefix), getJsonMapType()));
+            return;
+        }
+
+        for (Map.Entry<String, V1JSONSchemaProps> property : fieldSchema.getProperties().entrySet()) {
+            String propertyName = property.getKey();
+            V1JSONSchemaProps propertySchema = property.getValue();
+
+            processProperty(propertySchema, prefix, propertyName, fields);
+        }
+    }
+
+    private void processProperty(V1JSONSchemaProps propertySchema, String prefix, String propertyName, ImmutableList.Builder<RowType.Field> fields) {
+        String fieldName = prefix + "_" + propertyName;
+
+        if (propertySchema == null) {
+            // Add as JSON if schema is not defined
+            fields.add(new RowType.Field(Optional.of(fieldName), getJsonMapType()));
+            return;
+        }
+
+        String type = propertySchema.getType();
+        if (type == null) {
+            // If type is not specified, treat as JSON
+            fields.add(new RowType.Field(Optional.of(fieldName), getJsonMapType()));
+            return;
+        }
+
+        switch (type) {
+            case "object":
+                if (propertySchema.getProperties() != null && !propertySchema.getProperties().isEmpty()) {
+                    // Recursively process object properties
+                    for (Map.Entry<String, V1JSONSchemaProps> subProperty : propertySchema.getProperties().entrySet()) {
+                        processProperty(subProperty.getValue(), fieldName, subProperty.getKey(), fields);
+                    }
+                } else {
+                    // For objects with no defined properties or additionalProperties - represent as JSON
+                    fields.add(new RowType.Field(Optional.of(fieldName), getJsonMapType()));
+                }
+                break;
+            case "array":
+                // For arrays, handle based on items type
+                if (propertySchema.getItems() != null) {
+                    V1JSONSchemaProps itemsSchema = (V1JSONSchemaProps) propertySchema.getItems();
+                    Type elementType = getTypeFromJSONSchemaProps(itemsSchema);
+                    fields.add(new RowType.Field(Optional.of(fieldName), new ArrayType(elementType)));
+                } else {
+                    // Array with no item type defined - represent as JSON array
+                    fields.add(new RowType.Field(Optional.of(fieldName), new ArrayType(getJsonMapType())));
+                }
+                break;
+            default:
+                // For primitive types
+                Type fieldType = getTypeFromJSONSchemaProps(propertySchema);
+                fields.add(new RowType.Field(Optional.of(fieldName), fieldType));
+                break;
+        }
+    }
+
+    private Type getTypeFromJSONSchemaProps(V1JSONSchemaProps schema) {
+        if (schema == null) {
+            return getJsonMapType();
+        }
+
+        String type = schema.getType();
+        if (type == null) {
+            return getJsonMapType();
+        }
+
+        switch (type) {
+            case "string":
+                // Check for special string formats
+                String format = schema.getFormat();
+                if (format != null) {
+                    switch (format) {
+                        case "date-time":
+                            return typeManager.getType(new TypeSignature("timestamp"));
+                        case "int-or-string":
+                            return VARCHAR; // Handle IntOrString as varchar
+                        default:
+                            return VARCHAR;
+                    }
+                }
+                return VARCHAR;
+            case "integer":
+            case "number":
+                String numberFormat = schema.getFormat();
+                if (numberFormat != null && (numberFormat.equals("int64") || numberFormat.equals("int32"))) {
+                    return INTEGER;
+                }
+                return DOUBLE;
+            case "boolean":
+                return BOOLEAN;
+            case "array":
+                if (schema.getItems() != null) {
+                    V1JSONSchemaProps itemsSchema = (V1JSONSchemaProps) schema.getItems();
+                    return new ArrayType(getTypeFromJSONSchemaProps(itemsSchema));
+                }
+                return new ArrayType(getJsonMapType());
+            case "object":
+                // For objects, return JSON type for simplicity instead of creating complex nested types
+                return getJsonMapType();
+            default:
+                return getJsonMapType();
+        }
+    }
+
+    public Set<String> getSchemaNames()
+    {
+        return ImmutableSet.copyOf(availableContexts);
+    }
+
     private ApiClient getClientForContext(String context)
     {
         return contextClients.computeIfAbsent(context, ctx -> {
@@ -278,145 +477,212 @@ public class K8SClient
         });
     }
 
-    private K8sOpenApiSchema extractSchemaFromCrd(V1CustomResourceDefinition crd) {
-        try {
-            // Get the OpenAPI v3 schema from the CRD
-            V1JSONSchemaProps schema = crd.getSpec().getVersions().get(0).getSchema().getOpenAPIV3Schema();
-            if (schema == null) {
-                return null;
-            }
-
-            // Convert the schema to JSON string
-            String schemaJson = objectMapper.writeValueAsString(schema);
-            
-            // Parse it into our schema class
-            return objectMapper.readValue(schemaJson, K8sOpenApiSchema.class);
-        }
-        catch (Exception e) {
-            // Log warning but don't fail - we'll skip this CRD
-            System.err.println("Failed to extract schema from CRD " + crd.getMetadata().getName() + ": " + e.getMessage());
-            return null;
-        }
+    /**
+     * Refreshes the API client for a given context by removing it from the cache
+     * and forcing a new client to be created on the next request.
+     */
+    private void refreshClientForContext(String context) {
+        contextClients.remove(context);
+        contextConfigs.remove(context);
     }
 
-    public List<Map<String, Object>> getCustomResourceAsList(String context, K8sCustomResourceTable table) {
+    /**
+     * Executes an operation with automatic client refresh on failure.
+     * If the operation fails with an API exception, it will refresh the client
+     * and retry the operation once.
+     */
+    private <T> T executeWithClientRefresh(String context, Function<ApiClient, T> operation) {
         try {
             ApiClient client = getClientForContext(context);
-            CustomObjectsApi customApi = new CustomObjectsApi(client);
-
-            Object result;
-            if (table.isNamespaced()) {
-                result = customApi.listClusterCustomObject(
-                    table.getGroup(),
-                    table.getVersion(),
-                    table.getPlural(),
-                    null, false, null, null, null, null, null);
-            }
-            else {
-                result = customApi.listNamespacedCustomObject(
-                    table.getGroup(),
-                    table.getVersion(),
-                    "", // all namespaces
-                    table.getPlural(),
-                    null, false, null, null, null, null, null, null);
-            }
-
-            // Convert the result to a list of maps
-            Map<String, Object> resultMap = (Map<String, Object>) result;
-            List<Map<String, Object>> items = (List<Map<String, Object>>) resultMap.get("items");
-
-            return items.stream()
-                .map(item -> {
-                    Map<String, Object> row = new HashMap<>();
-                    
-                    // Extract metadata fields
-                    Map<String, Object> metadata = (Map<String, Object>) item.get("metadata");
-                    if (metadata != null) {
-                        row.put("name", metadata.get("name"));
-                        if (table.isNamespaced()) {
-                            row.put("namespace", metadata.get("namespace"));
-                        }
-                    }
-
-                    // Extract spec fields based on schema
-                    Map<String, Object> spec = (Map<String, Object>) item.get("spec");
-                    if (spec != null) {
-                        for (Map.Entry<String, K8sOpenApiSchema> entry : table.getSchema().getProperties().entrySet()) {
-                            row.put(entry.getKey(), spec.get(entry.getKey()));
-                        }
-                    }
-
-                    return row;
-                })
-                .collect(Collectors.toList());
+            return operation.apply(client);
         }
-        catch (ApiException e) {
-            handleApiException(e, "list custom resources");
-            return ImmutableList.of(); // Never reached due to exception
+        catch (UncheckedIOException e) {
+            if (e.getCause() instanceof IOException &&
+                e.getCause().getCause() instanceof ApiException) {
+                // Refresh the client and retry once
+                refreshClientForContext(context);
+                ApiClient refreshedClient = getClientForContext(context);
+                return operation.apply(refreshedClient);
+            }
+            throw e;
+        }
+        catch (Exception e) {
+            throw new UncheckedIOException("Failed to execute operation", new IOException(e));
         }
     }
 
-    public List<Map<String, Object>> getResourceAsList(String schema, String table) {
+    public Set<String> getTableNames(String schema)
+    {
+        requireNonNull(schema, "schema is null");
+        if (!availableContexts.contains(schema)) {
+            return ImmutableSet.of();
+        }
+
+        Map<String, K8STable> tables = schemas.computeIfAbsent(schema, this::initializeSchema);
+        return ImmutableSet.copyOf(tables.keySet());
+    }
+
+    public K8STable getTable(String schema, String tableName)
+    {
+        requireNonNull(schema, "schema is null");
+        requireNonNull(tableName, "tableName is null");
+        if (!availableContexts.contains(schema)) {
+            return null;
+        }
+
+        Map<String, K8STable> tables = schemas.computeIfAbsent(schema, this::initializeSchema);
+        return tables.get(tableName);
+    }
+
+    private Type getJsonMapType()
+    {
+        return typeManager.getType(new TypeSignature(JSON));
+    }
+
+    private boolean isNamespacedResource(String resourceName)
+    {
+        String lowerResourceName = resourceName.toLowerCase();
+        if (CLUSTER_SCOPED_RESOURCES.contains(lowerResourceName)) {
+            return false;
+        }
+        return NAMESPACED_RESOURCES.contains(lowerResourceName);
+    }
+
+    public List<Map<String, Object>> getPods(String context)
+    {
+        return getResourceList(
+            context,
+            io.kubernetes.client.openapi.models.V1Pod.class,
+            client -> withRetry("list pods", () -> {
+                try {
+                    CoreV1Api api = new CoreV1Api(client);
+                    V1PodList podList = api.listPodForAllNamespaces(null, null, null, null, null, null, null, null, null, null);
+                    return podList.getItems();
+                } catch (ApiException e) {
+                    handleApiException(e, "list pods");
+                    return null; // This line will never be reached due to exception
+                }
+            })
+        );
+    }
+
+    private List<Map<String, Object>> getServices(String context) {
+        return getResourceList(
+            context,
+            io.kubernetes.client.openapi.models.V1Service.class,
+            client -> {
+                try {
+                    CoreV1Api api = new CoreV1Api(client);
+                    V1ServiceList serviceList = api.listServiceForAllNamespaces(null, null, null, null, null, null, null, null, null, null);
+                    return serviceList.getItems();
+                } catch (ApiException e) {
+                    handleApiException(e, "list services");
+                    return null; // This line will never be reached due to exception
+                }
+            }
+        );
+    }
+
+    public List<Map<String, Object>> getTableData(String schema, String table)
+    {
+        requireNonNull(schema, "schema is null");
+        requireNonNull(table, "table is null");
+
+        if (!availableContexts.contains(schema)) {
+            return ImmutableList.of();
+        }
+
+        switch (table.toLowerCase()) {
+            case "pods":
+                return getPods(schema);
+            default:
+                return ImmutableList.of();
+        }
+    }
+
+    public List<Map<String, Object>> getResourceAsList(String schema, String table)
+    {
         ApiClient client = getClientForContext(schema);
-        K8STable k8sTable = getTable(schema, table);
 
-        if (k8sTable.isCustomResource()) {
+        // Check if this is a custom resource
+        if (!NAMESPACED_RESOURCES.contains(table.toLowerCase()) && !CLUSTER_SCOPED_RESOURCES.contains(table.toLowerCase())) {
             try {
-                CustomObjectsApi customApi = new CustomObjectsApi(client);
-                Object result;
-                
-                if (k8sTable.isNamespaced().orElse(false)) {
-                    result = customApi.listNamespacedCustomObject(
-                        k8sTable.getGroup().get(),
-                        k8sTable.getVersion().get(),
-                        "", // all namespaces
-                        k8sTable.getPlural().get(),
-                        null, null, null, null, null, null, null, null, null, null);
-                }
-                else {
-                    result = customApi.listClusterCustomObject(
-                        k8sTable.getGroup().get(),
-                        k8sTable.getVersion().get(),
-                        k8sTable.getPlural().get(),
-                        null, null, null, null, null, null, null, null, null);
-                }
+                // Find the CRD for this table
+                ApiextensionsV1Api apiExtensionsApi = new ApiextensionsV1Api(client);
+                V1CustomResourceDefinitionList crdList = apiExtensionsApi.listCustomResourceDefinition(null, null, null, null, null, null, null, null, null, null);
 
-                // Convert the result to a list of maps
-                Map<String, Object> resultMap = (Map<String, Object>) result;
-                List<Map<String, Object>> items = (List<Map<String, Object>>) resultMap.get("items");
+                for (V1CustomResourceDefinition crd : crdList.getItems()) {
+                    String group = crd.getSpec().getGroup();
+                    String kind = crd.getSpec().getNames().getKind().toLowerCase();
+                    String tableName = kind + "_" + group.replace('.', '_');
 
-                return items.stream()
-                    .map(item -> {
-                        Map<String, Object> row = new HashMap<>();
-                        
-                        // Extract metadata fields
-                        Map<String, Object> metadata = (Map<String, Object>) item.get("metadata");
-                        if (metadata != null) {
-                            row.put("name", metadata.get("name"));
-                            if (k8sTable.isNamespaced().orElse(false)) {
-                                row.put("namespace", metadata.get("namespace"));
-                            }
+                    if (tableName.equals(table)) {
+                        String version = crd.getSpec().getVersions().stream()
+                            .filter(V1CustomResourceDefinitionVersion::getServed)
+                            .map(V1CustomResourceDefinitionVersion::getName)
+                            .findFirst()
+                            .orElseThrow(() -> new RuntimeException("No served version found for CRD: " + crd.getMetadata().getName()));
+
+                        String plural = crd.getSpec().getNames().getPlural();
+
+                        // Create a dynamic client for this custom resource
+                        DynamicKubernetesApi dynamicApi = new DynamicKubernetesApi(
+                            group, version, plural, client);
+
+                        KubernetesApiResponse<DynamicKubernetesListObject> response;
+                        if (crd.getSpec().getScope().equals("Namespaced")) {
+                            response = dynamicApi.list();
+                        } else {
+                            response = dynamicApi.list();
                         }
 
-                        // Extract spec fields based on schema
-                        Map<String, Object> spec = (Map<String, Object>) item.get("spec");
-                        if (spec != null && k8sTable.getSchema().isPresent()) {
-                            for (Map.Entry<String, K8sOpenApiSchema> entry : k8sTable.getSchema().get().getProperties().entrySet()) {
-                                row.put(entry.getKey(), spec.get(entry.getKey()));
-                            }
+                        if (!response.isSuccess()) {
+                            throw new RuntimeException("Failed to list custom resources: " + response.getStatus().getMessage());
                         }
 
-                        return row;
-                    })
-                    .collect(Collectors.toList());
+                        return response.getObject().getItems().stream()
+                            .map(item -> {
+                                Map<String, Object> row = new HashMap<>();
+
+                                // Add metadata
+                                if (item.getMetadata() != null) {
+                                    row.put("name", item.getMetadata().getName());
+                                    if (item.getMetadata().getNamespace() != null) {
+                                        row.put("namespace", item.getMetadata().getNamespace());
+                                    }
+                                    if (item.getMetadata().getCreationTimestamp() != null) {
+                                        row.put("creation_timestamp", java.sql.Timestamp.valueOf(item.getMetadata().getCreationTimestamp().toLocalDateTime()));
+                                    }
+                                    if (item.getMetadata().getUid() != null) {
+                                        row.put("uid", item.getMetadata().getUid());
+                                    }
+                                    if (item.getMetadata().getResourceVersion() != null) {
+                                        row.put("resource_version", item.getMetadata().getResourceVersion());
+                                    }
+                                }
+
+                                // Add spec fields
+                                if (item.getRaw().get("spec") instanceof Map) {
+                                    addFlattenedFields(row, (Map<String, Object>) item.getRaw().get("spec"), "spec");
+                                }
+
+                                // Add status fields
+                                if (item.getRaw().get("status") instanceof Map) {
+                                    addFlattenedFields(row, (Map<String, Object>) item.getRaw().get("status"), "status");
+                                }
+
+                                return row;
+                            })
+                            .collect(Collectors.toList());
+                    }
+                }
             }
             catch (ApiException e) {
-                handleApiException(e, "list custom resources");
-                return ImmutableList.of(); // Never reached due to exception
+                throw new RuntimeException("Failed to list custom resources", e);
             }
         }
 
-        // Use the appropriate API class based on the resource type
+        // Handle standard resources
         switch (table.toLowerCase()) {
             case "pods":
                 return getPods(schema);
@@ -466,297 +732,6 @@ public class K8SClient
                 return getResourceQuotas(schema);
             case "limitranges":
                 return getLimitRanges(schema);
-            default:
-                return ImmutableList.of();
-        }
-    }
-
-    private <T> List<Map<String, Object>> getResourceList(String context, Class<T> resourceClass, Function<ApiClient, List<T>> listFunction) {
-        try {
-            ApiClient client = getClientForContext(context);
-            List<T> items = listFunction.apply(client);
-
-            return items.stream()
-                    .map(item -> {
-                        Map<String, Object> row = (Map<String, Object>) convertToMap(item);
-
-                        // Add standard fields if available
-                        try {
-                            Method getMetadata = item.getClass().getMethod("getMetadata");
-                            Object metadata = getMetadata.invoke(item);
-                            if (metadata != null) {
-                                Method getName = metadata.getClass().getMethod("getName");
-                                Method getNamespace = metadata.getClass().getMethod("getNamespace");
-
-                                Object name = getName.invoke(metadata);
-                                Object namespace = getNamespace.invoke(metadata);
-
-                                if (name != null) {
-                                    row.put("name", name.toString());
-                                }
-                                if (namespace != null) {
-                                    row.put("namespace", namespace.toString());
-                                }
-                            }
-                        }
-                        catch (Exception e) {
-                            // Ignore if metadata methods are not available
-                        }
-
-                        return row;
-                    })
-                    .collect(Collectors.toList());
-        }
-        catch (UncheckedIOException e) {
-            throw e;
-        }
-        catch (Exception e) {
-            throw new UncheckedIOException("Failed to get resources for class: " + resourceClass.getName(), new IOException(e));
-        }
-    }
-
-    private RowType getResourceType(String resourceKind) {
-        return resourceTypes.computeIfAbsent(resourceKind, kind -> {
-            try {
-                // Use the built-in API classes based on the resource kind
-                Class<?> resourceClass = getResourceClass(kind);
-                if (resourceClass != null) {
-                    return createRowTypeFromClass(resourceClass);
-                }
-
-                // For unknown resources, return a generic row type
-                return createGenericRowType();
-            } catch (Exception e) {
-                throw new TrinoException(GENERIC_INTERNAL_ERROR,
-                    "Failed to get type information for resource: " + kind, e);
-            }
-        });
-    }
-
-    private Class<?> getResourceClass(String resourceKind) {
-        switch (resourceKind.toLowerCase()) {
-            case "pods":
-                return io.kubernetes.client.openapi.models.V1Pod.class;
-            case "services":
-                return io.kubernetes.client.openapi.models.V1Service.class;
-            case "deployments":
-                return io.kubernetes.client.openapi.models.V1Deployment.class;
-            case "replicasets":
-                return io.kubernetes.client.openapi.models.V1ReplicaSet.class;
-            case "statefulsets":
-                return io.kubernetes.client.openapi.models.V1StatefulSet.class;
-            case "daemonsets":
-                return io.kubernetes.client.openapi.models.V1DaemonSet.class;
-            case "jobs":
-                return io.kubernetes.client.openapi.models.V1Job.class;
-            case "cronjobs":
-                return io.kubernetes.client.openapi.models.V1CronJob.class;
-            case "configmaps":
-                return io.kubernetes.client.openapi.models.V1ConfigMap.class;
-            case "secrets":
-                return io.kubernetes.client.openapi.models.V1Secret.class;
-            case "persistentvolumeclaims":
-                return io.kubernetes.client.openapi.models.V1PersistentVolumeClaim.class;
-            case "horizontalpodautoscalers":
-                return io.kubernetes.client.openapi.models.V1HorizontalPodAutoscaler.class;
-            case "ingresses":
-                return io.kubernetes.client.openapi.models.V1Ingress.class;
-            case "networkpolicies":
-                return io.kubernetes.client.openapi.models.V1NetworkPolicy.class;
-            case "rolebindings":
-                return io.kubernetes.client.openapi.models.V1RoleBinding.class;
-            case "roles":
-                return io.kubernetes.client.openapi.models.V1Role.class;
-            case "serviceaccounts":
-                return io.kubernetes.client.openapi.models.V1ServiceAccount.class;
-            case "endpoints":
-                return io.kubernetes.client.openapi.models.V1Endpoints.class;
-            case "nodes":
-                return io.kubernetes.client.openapi.models.V1Node.class;
-            case "persistentvolumes":
-                return io.kubernetes.client.openapi.models.V1PersistentVolume.class;
-            case "namespaces":
-                return io.kubernetes.client.openapi.models.V1Namespace.class;
-            case "resourcequotas":
-                return io.kubernetes.client.openapi.models.V1ResourceQuota.class;
-            case "limitranges":
-                return io.kubernetes.client.openapi.models.V1LimitRange.class;
-            default:
-                return null;
-        }
-    }
-
-    private <T> RowType createRowTypeFromClass(Class<T> clazz) {
-        ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
-
-        // If it's a primitive type or timestamp, return a simple row type with a single value field
-        if (isPrimitiveOrTimestamp(clazz)) {
-            Type type = getSimpleType(clazz);
-            fields.add(new RowType.Field(Optional.of("value"), type));
-            return RowType.from(fields.build());
-        }
-
-        // Get all fields with @SerializedName annotation
-        for (Field field : clazz.getDeclaredFields()) {
-            SerializedName annotation = field.getAnnotation(SerializedName.class);
-            if (annotation != null) {
-                String fieldName = annotation.value();
-                Type fieldType = getTypeFromField(field);
-                fields.add(new RowType.Field(Optional.of(fieldName), fieldType));
-            }
-        }
-
-        // If no fields were found, return a generic JSON type
-        if (fields.build().isEmpty()) {
-            return createGenericRowType();
-        }
-
-        return RowType.from(fields.build());
-    }
-
-    private Type getSimpleType(Class<?> clazz) {
-        if (clazz == String.class) {
-            return VARCHAR;
-        }
-        if (clazz == Integer.class || clazz == int.class ||
-            clazz == Long.class || clazz == long.class) {
-            return INTEGER;
-        }
-        if (clazz == Double.class || clazz == double.class ||
-            clazz == Float.class || clazz == float.class) {
-            return DOUBLE;
-        }
-        if (clazz == Boolean.class || clazz == boolean.class) {
-            return BOOLEAN;
-        }
-        if (clazz == Date.class ||
-            clazz == java.sql.Timestamp.class ||
-            clazz == java.time.OffsetDateTime.class ||
-            clazz == Number.class) {  // For epoch timestamps
-            return typeManager.getType(new TypeSignature("timestamp"));
-        }
-        // Default to VARCHAR for unknown types
-        return VARCHAR;
-    }
-
-    private Type getTypeFromField(Field field) {
-        Class<?> fieldType = field.getType();
-
-        // Handle timestamps first
-        if (fieldType == java.time.OffsetDateTime.class ||
-            fieldType == Date.class ||
-            fieldType == java.sql.Timestamp.class ||
-            field.getName().toLowerCase().contains("timestamp")) {
-            return typeManager.getType(new TypeSignature("timestamp"));
-        }
-
-        // Handle primitive types
-        if (isPrimitiveOrTimestamp(fieldType)) {
-            return getSimpleType(fieldType);
-        }
-
-        // Handle Lists
-        if (List.class.isAssignableFrom(fieldType)) {
-            Type elementType = getElementTypeFromField(field);
-            return new ArrayType(elementType);
-        }
-
-        // Handle Maps
-        if (Map.class.isAssignableFrom(fieldType)) {
-            return getJsonMapType();
-        }
-
-        // For complex objects, create a RowType
-        return createRowTypeFromClass(fieldType);
-    }
-
-    private Type getElementTypeFromField(Field field) {
-        // Try to get the generic type of the List
-        java.lang.reflect.Type genericType = field.getGenericType();
-        if (genericType instanceof ParameterizedType) {
-            ParameterizedType paramType = (ParameterizedType) genericType;
-            java.lang.reflect.Type[] typeArguments = paramType.getActualTypeArguments();
-            if (typeArguments.length > 0) {
-                java.lang.reflect.Type elementType = typeArguments[0];
-                if (elementType instanceof Class) {
-                    Class<?> elementClass = (Class<?>) elementType;
-                    return isPrimitiveOrTimestamp(elementClass) ?
-                           getSimpleType(elementClass) :
-                           getJsonMapType();
-                }
-            }
-        }
-        // Default to JSON type for complex elements
-        return getJsonMapType();
-    }
-
-    private RowType createGenericRowType() {
-        ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
-        fields.add(new RowType.Field(Optional.of("value"), getJsonMapType()));
-        return RowType.from(fields.build());
-    }
-
-    private boolean isPrimitiveOrTimestamp(Class<?> clazz) {
-        return clazz.isPrimitive() ||
-                clazz == String.class ||
-                clazz == Integer.class ||
-                clazz == Long.class ||
-                clazz == Double.class ||
-                clazz == Float.class ||
-                clazz == Boolean.class ||
-                clazz == Character.class ||
-                clazz == Date.class ||
-                clazz == java.sql.Timestamp.class ||
-                clazz == java.time.OffsetDateTime.class;
-    }
-
-    private List<Map<String, Object>> getPods(String context)
-    {
-        return getResourceList(
-            context,
-            io.kubernetes.client.openapi.models.V1Pod.class,
-            client -> withRetry("list pods", () -> {
-                try {
-                    CoreV1Api api = new CoreV1Api(client);
-                    V1PodList podList = api.listPodForAllNamespaces(null, null, null, null, null, null, null, null, null, null);
-                    return podList.getItems();
-                } catch (ApiException e) {
-                    handleApiException(e, "list pods");
-                    return null; // This line will never be reached due to exception
-                }
-            })
-        );
-    }
-
-    private List<Map<String, Object>> getServices(String context) {
-        return getResourceList(
-            context,
-            io.kubernetes.client.openapi.models.V1Service.class,
-            client -> {
-                try {
-                    CoreV1Api api = new CoreV1Api(client);
-                    V1ServiceList serviceList = api.listServiceForAllNamespaces(null, null, null, null, null, null, null, null, null, null);
-                    return serviceList.getItems();
-                } catch (ApiException e) {
-                    handleApiException(e, "list services");
-                    return null; // This line will never be reached due to exception
-                }
-            }
-        );
-    }
-
-    public List<Map<String, Object>> getTableData(String schema, String table)
-    {
-        requireNonNull(schema, "schema is null");
-        requireNonNull(table, "table is null");
-
-        if (!availableContexts.contains(schema)) {
-            return ImmutableList.of();
-        }
-
-        switch (table.toLowerCase()) {
-            case "pods":
-                return getPods(schema);
             default:
                 return ImmutableList.of();
         }
@@ -1137,6 +1112,245 @@ public class K8SClient
         );
     }
 
+    private <T> List<Map<String, Object>> getResourceList(String context, Class<T> resourceClass, Function<ApiClient, List<T>> listFunction) {
+        try {
+            ApiClient client = getClientForContext(context);
+            List<T> items = listFunction.apply(client);
+
+            return items.stream()
+                    .map(item -> {
+                        Map<String, Object> row = (Map<String, Object>) convertToMap(item);
+
+                        // Add standard fields if available
+                        try {
+                            Method getMetadata = item.getClass().getMethod("getMetadata");
+                            Object metadata = getMetadata.invoke(item);
+                            if (metadata != null) {
+                                Method getName = metadata.getClass().getMethod("getName");
+                                Method getNamespace = metadata.getClass().getMethod("getNamespace");
+
+                                Object name = getName.invoke(metadata);
+                                Object namespace = getNamespace.invoke(metadata);
+
+                                if (name != null) {
+                                    row.put("name", name.toString());
+                                }
+                                if (namespace != null) {
+                                    row.put("namespace", namespace.toString());
+                                }
+                            }
+                        }
+                        catch (Exception e) {
+                            // Ignore if metadata methods are not available
+                        }
+
+                        return row;
+                    })
+                    .collect(Collectors.toList());
+        }
+        catch (UncheckedIOException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new UncheckedIOException("Failed to get resources for class: " + resourceClass.getName(), new IOException(e));
+        }
+    }
+
+    private RowType getResourceType(String resourceKind) {
+        return resourceTypes.computeIfAbsent(resourceKind, kind -> {
+            try {
+                // Use the built-in API classes based on the resource kind
+                Class<?> resourceClass = getResourceClass(kind);
+                if (resourceClass != null) {
+                    return createRowTypeFromClass(resourceClass);
+                }
+
+                // For unknown resources, return a generic row type
+                return createGenericRowType();
+            } catch (Exception e) {
+                throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                    "Failed to get type information for resource: " + kind, e);
+            }
+        });
+    }
+
+    private Class<?> getResourceClass(String resourceKind) {
+        switch (resourceKind.toLowerCase()) {
+            case "pods":
+                return io.kubernetes.client.openapi.models.V1Pod.class;
+            case "services":
+                return io.kubernetes.client.openapi.models.V1Service.class;
+            case "deployments":
+                return io.kubernetes.client.openapi.models.V1Deployment.class;
+            case "replicasets":
+                return io.kubernetes.client.openapi.models.V1ReplicaSet.class;
+            case "statefulsets":
+                return io.kubernetes.client.openapi.models.V1StatefulSet.class;
+            case "daemonsets":
+                return io.kubernetes.client.openapi.models.V1DaemonSet.class;
+            case "jobs":
+                return io.kubernetes.client.openapi.models.V1Job.class;
+            case "cronjobs":
+                return io.kubernetes.client.openapi.models.V1CronJob.class;
+            case "configmaps":
+                return io.kubernetes.client.openapi.models.V1ConfigMap.class;
+            case "secrets":
+                return io.kubernetes.client.openapi.models.V1Secret.class;
+            case "persistentvolumeclaims":
+                return io.kubernetes.client.openapi.models.V1PersistentVolumeClaim.class;
+            case "horizontalpodautoscalers":
+                return io.kubernetes.client.openapi.models.V1HorizontalPodAutoscaler.class;
+            case "ingresses":
+                return io.kubernetes.client.openapi.models.V1Ingress.class;
+            case "networkpolicies":
+                return io.kubernetes.client.openapi.models.V1NetworkPolicy.class;
+            case "rolebindings":
+                return io.kubernetes.client.openapi.models.V1RoleBinding.class;
+            case "roles":
+                return io.kubernetes.client.openapi.models.V1Role.class;
+            case "serviceaccounts":
+                return io.kubernetes.client.openapi.models.V1ServiceAccount.class;
+            case "endpoints":
+                return io.kubernetes.client.openapi.models.V1Endpoints.class;
+            case "nodes":
+                return io.kubernetes.client.openapi.models.V1Node.class;
+            case "persistentvolumes":
+                return io.kubernetes.client.openapi.models.V1PersistentVolume.class;
+            case "namespaces":
+                return io.kubernetes.client.openapi.models.V1Namespace.class;
+            case "resourcequotas":
+                return io.kubernetes.client.openapi.models.V1ResourceQuota.class;
+            case "limitranges":
+                return io.kubernetes.client.openapi.models.V1LimitRange.class;
+            default:
+                return null;
+        }
+    }
+
+    private <T> RowType createRowTypeFromClass(Class<T> clazz) {
+        ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
+
+        // If it's a primitive type or timestamp, return a simple row type with a single value field
+        if (isPrimitiveOrTimestamp(clazz)) {
+            Type type = getSimpleType(clazz);
+            fields.add(new RowType.Field(Optional.of("value"), type));
+            return RowType.from(fields.build());
+        }
+
+        // Get all fields with @SerializedName annotation
+        for (Field field : clazz.getDeclaredFields()) {
+            SerializedName annotation = field.getAnnotation(SerializedName.class);
+            if (annotation != null) {
+                String fieldName = annotation.value();
+                Type fieldType = getTypeFromField(field);
+                fields.add(new RowType.Field(Optional.of(fieldName), fieldType));
+            }
+        }
+
+        // If no fields were found, return a generic JSON type
+        if (fields.build().isEmpty()) {
+            return createGenericRowType();
+        }
+
+        return RowType.from(fields.build());
+    }
+
+    private Type getSimpleType(Class<?> clazz) {
+        if (clazz == String.class) {
+            return VARCHAR;
+        }
+        if (clazz == Integer.class || clazz == int.class ||
+            clazz == Long.class || clazz == long.class) {
+            return INTEGER;
+        }
+        if (clazz == Double.class || clazz == double.class ||
+            clazz == Float.class || clazz == float.class) {
+            return DOUBLE;
+        }
+        if (clazz == Boolean.class || clazz == boolean.class) {
+            return BOOLEAN;
+        }
+        if (clazz == Date.class ||
+            clazz == java.sql.Timestamp.class ||
+            clazz == java.time.OffsetDateTime.class ||
+            clazz == Number.class) {  // For epoch timestamps
+            return typeManager.getType(new TypeSignature("timestamp"));
+        }
+        // Default to VARCHAR for unknown types
+        return VARCHAR;
+    }
+
+    private Type getTypeFromField(Field field) {
+        Class<?> fieldType = field.getType();
+
+        // Handle timestamps first
+        if (fieldType == java.time.OffsetDateTime.class ||
+            fieldType == Date.class ||
+            fieldType == java.sql.Timestamp.class ||
+            field.getName().toLowerCase().contains("timestamp")) {
+            return typeManager.getType(new TypeSignature("timestamp"));
+        }
+
+        // Handle primitive types
+        if (isPrimitiveOrTimestamp(fieldType)) {
+            return getSimpleType(fieldType);
+        }
+
+        // Handle Lists
+        if (List.class.isAssignableFrom(fieldType)) {
+            Type elementType = getElementTypeFromField(field);
+            return new ArrayType(elementType);
+        }
+
+        // Handle Maps
+        if (Map.class.isAssignableFrom(fieldType)) {
+            return getJsonMapType();
+        }
+
+        // For complex objects, create a RowType
+        return createRowTypeFromClass(fieldType);
+    }
+
+    private Type getElementTypeFromField(Field field) {
+        // Try to get the generic type of the List
+        java.lang.reflect.Type genericType = field.getGenericType();
+        if (genericType instanceof ParameterizedType) {
+            ParameterizedType paramType = (ParameterizedType) genericType;
+            java.lang.reflect.Type[] typeArguments = paramType.getActualTypeArguments();
+            if (typeArguments.length > 0) {
+                java.lang.reflect.Type elementType = typeArguments[0];
+                if (elementType instanceof Class) {
+                    Class<?> elementClass = (Class<?>) elementType;
+                    return isPrimitiveOrTimestamp(elementClass) ?
+                           getSimpleType(elementClass) :
+                           getJsonMapType();
+                }
+            }
+        }
+        // Default to JSON type for complex elements
+        return getJsonMapType();
+    }
+
+    private RowType createGenericRowType() {
+        ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
+        fields.add(new RowType.Field(Optional.of("value"), getJsonMapType()));
+        return RowType.from(fields.build());
+    }
+
+    private boolean isPrimitiveOrTimestamp(Class<?> clazz) {
+        return clazz.isPrimitive() ||
+                clazz == String.class ||
+                clazz == Integer.class ||
+                clazz == Long.class ||
+                clazz == Double.class ||
+                clazz == Float.class ||
+                clazz == Boolean.class ||
+                clazz == Character.class ||
+                clazz == Date.class ||
+                clazz == java.sql.Timestamp.class ||
+                clazz == java.time.OffsetDateTime.class;
+    }
+
     private <T> List<T> withRetry(String operation, Supplier<List<T>> action) {
         int attempts = 0;
         while (true) {
@@ -1301,14 +1515,6 @@ public class K8SClient
         }
     }
 
-    private boolean isPrimitiveType(Object value) {
-        return value instanceof Number ||
-                value instanceof String ||
-                value instanceof Boolean ||
-                value instanceof Character ||
-                value.getClass().isPrimitive();
-    }
-
     private void handleApiException(ApiException e, String operation) {
         String message;
         if (e.getCode() == 403) {
@@ -1323,40 +1529,129 @@ public class K8SClient
         throw new UncheckedIOException(message, new IOException(e));
     }
 
-    private boolean isNamespacedResource(String resourceKind) {
-        return NAMESPACED_RESOURCES.contains(resourceKind.toLowerCase());
-    }
+    private void addFlattenedFields(Map<String, Object> row, Map<String, Object> fields, String prefix) {
+        for (Map.Entry<String, Object> field : fields.entrySet()) {
+            String key = prefix + "_" + field.getKey();
+            Object value = field.getValue();
 
-    private K8STable getTable(String schema, String table) {
-        Map<String, K8STable> tables = schemas.get(schema);
-        if (tables == null) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Schema not found: " + schema);
+            if (value instanceof Map) {
+                addFlattenedFields(row, (Map<String, Object>) value, key);
+            } else if (value instanceof List) {
+                // For lists, convert to JSON string
+                try {
+                    row.put(key, objectMapper.writeValueAsString(value));
+                } catch (Exception e) {
+                    // If serialization fails, store as toString
+                    row.put(key, value.toString());
+                }
+            } else {
+                row.put(key, value);
+            }
         }
-        K8STable k8sTable = tables.get(table);
-        if (k8sTable == null) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Table not found: " + table);
-        }
-        return k8sTable;
     }
 
-    private Type getJsonMapType() {
-        return typeManager.getType(new TypeSignature(JSON));
-    }
-
-    private <T> T executeWithClientRefresh(String context, Function<ApiClient, T> operation) {
+    // List all available CustomResourceDefinitions (CRDs) in the cluster for the given context
+    public List<String> listCustomResourceDefinitions(String context)
+    {
         try {
             ApiClient client = getClientForContext(context);
-            return operation.apply(client);
-        }
-        catch (ApiException e) {
-            if (e.getCode() == 401) {
-                // Token might be expired, refresh the client
-                contextClients.remove(context);
-                ApiClient refreshedClient = getClientForContext(context);
-                return operation.apply(refreshedClient);
+            ApiextensionsV1Api apiExtensionsApi = new ApiextensionsV1Api(client);
+            V1CustomResourceDefinitionList crdList = apiExtensionsApi.listCustomResourceDefinition(
+                    null, null, null, null, null, null, null, null, null, null);
+            List<String> crdNames = new ArrayList<>();
+            for (V1CustomResourceDefinition crd : crdList.getItems()) {
+                crdNames.add(crd.getMetadata().getName());
             }
-            throw new TrinoException(GENERIC_INTERNAL_ERROR,
-                format("Kubernetes API request failed: %s", e.getMessage()), e);
+            return crdNames;
         }
+        catch (Exception e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to list custom resource definitions", e);
+        }
+    }
+
+    // Fetch the schema for a given CRD and version, returning Trino-compatible columns
+    public List<K8SColumnHandle> getCustomResourceSchema(String context, String crdName, String version)
+    {
+        try {
+            ApiClient client = getClientForContext(context);
+            ApiextensionsV1Api apiExtensionsApi = new ApiextensionsV1Api(client);
+            V1CustomResourceDefinition crd = apiExtensionsApi.readCustomResourceDefinition(crdName, null);
+            V1CustomResourceDefinitionVersion crdVersion = crd.getSpec().getVersions().stream()
+                    .filter(v -> v.getName().equals(version))
+                    .findFirst()
+                    .orElseThrow(() -> new TrinoException(GENERIC_INTERNAL_ERROR, "CRD version not found: " + version));
+            V1JSONSchemaProps schema = crdVersion.getSchema() != null ? crdVersion.getSchema().getOpenAPIV3Schema() : null;
+            if (schema == null) {
+                throw new TrinoException(GENERIC_INTERNAL_ERROR, "No OpenAPI schema found for CRD: " + crdName + ", version: " + version);
+            }
+            // Flatten the schema properties into Trino columns
+            return convertSchemaToColumns(schema, "");
+        }
+        catch (Exception e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to fetch custom resource schema for " + crdName + ", version: " + version, e);
+        }
+    }
+
+    // Helper to convert OpenAPI schema to Trino columns
+    private List<K8SColumnHandle> convertSchemaToColumns(V1JSONSchemaProps schema, String parentPrefix)
+    {
+        List<K8SColumnHandle> columns = new ArrayList<>();
+        if (schema.getProperties() != null) {
+            for (Map.Entry<String, V1JSONSchemaProps> entry : schema.getProperties().entrySet()) {
+                String name = entry.getKey();
+                V1JSONSchemaProps prop = entry.getValue();
+                String fullName = parentPrefix.isEmpty() ? name : parentPrefix + "." + name;
+                String type = prop.getType();
+                Type trinoType = mapOpenAPITypeToTrinoType(type, prop);
+                columns.add(new K8SColumnHandle(fullName, new TypeSignature(JSON), false));
+                // Recursively flatten nested objects
+                if ("object".equals(type) && prop.getProperties() != null) {
+                    columns.addAll(convertSchemaToColumns(prop, fullName));
+                }
+            }
+        }
+        return columns;
+    }
+
+    /**
+     * Maps OpenAPI schema types to Trino type system types.
+     * 
+     * @param type The OpenAPI type string (e.g., "string", "integer", "boolean")
+     * @param prop The V1JSONSchemaProps object with additional type information
+     * @return The corresponding Trino Type
+     * 
+     * Mapping rules:
+     * - "string" → VARCHAR
+     * - "integer" → INTEGER
+     * - "number" → DOUBLE
+     * - "boolean" → BOOLEAN
+     * - "array" → JSON (simplified representation for arrays)
+     * - "object" → JSON (simplified representation for complex objects)
+     * - Any unrecognized type → VARCHAR (fallback)
+     */
+    private Type mapOpenAPITypeToTrinoType(String type, V1JSONSchemaProps prop)
+    {
+        if ("string".equals(type)) {
+            return VARCHAR;
+        }
+        if ("integer".equals(type)) {
+            return INTEGER;
+        }
+        if ("number".equals(type)) {
+            return DOUBLE;
+        }
+        if ("boolean".equals(type)) {
+            return BOOLEAN;
+        }
+        if ("array".equals(type)) {
+            // Use JSON for arrays for simplicity
+            return typeManager.getType(new TypeSignature(JSON));
+        }
+        if ("object".equals(type)) {
+            // Use JSON for generic objects
+            return typeManager.getType(new TypeSignature(JSON));
+        }
+        // Fallback to VARCHAR
+        return VARCHAR;
     }
 }
