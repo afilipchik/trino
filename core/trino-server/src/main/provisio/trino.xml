@@ -154,6 +154,12 @@
         </artifact>
     </artifactSet>
 
+    <artifactSet to="plugin/kubernetes">
+        <artifact id="${project.groupId}:trino-kubernetes:zip:${project.version}">
+            <unpack />
+        </artifact>
+    </artifactSet>
+
     <artifactSet to="plugin/lakehouse">
         <artifact id="${project.groupId}:trino-lakehouse:zip:${project.version}">
             <unpack />

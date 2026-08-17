@@ -3,7 +3,7 @@ name: kubernetes-connector
 status: in-progress
 created: 2026-08-17T07:06:06Z
 updated: 2026-08-17T07:06:06Z
-progress: 0%
+progress: 78%
 prd: .claude/prds/kubernetes-connector.md
 github: (skipped — no gh CLI on this machine; local-only tracking)
 ---

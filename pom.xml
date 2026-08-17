@@ -90,6 +90,7 @@
         <module>plugin/trino-jmx</module>
         <module>plugin/trino-kafka</module>
         <module>plugin/trino-kafka-event-listener</module>
+        <module>plugin/trino-kubernetes</module>
         <module>plugin/trino-lakehouse</module>
         <module>plugin/trino-ldap-group-provider</module>
         <module>plugin/trino-loki</module>
@@ -1169,6 +1170,12 @@
             <dependency>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-kafka-event-listener</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-kubernetes</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
