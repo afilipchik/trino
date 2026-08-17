@@ -23,7 +23,7 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * @param dataColumns the visible table columns, in table order, matching the data
- *        channels of the pages the merge sink receives
+ *         channels of the pages the merge sink receives
  */
 public record KubernetesMergeTableHandle(KubernetesTableHandle table, List<KubernetesColumnHandle> dataColumns)
         implements ConnectorMergeTableHandle

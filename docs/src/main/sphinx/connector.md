@@ -25,6 +25,7 @@ Iceberg         <connector/iceberg>
 Ignite          <connector/ignite>
 JMX             <connector/jmx>
 Kafka           <connector/kafka>
+Kubernetes      <connector/kubernetes>
 Lakehouse       <connector/lakehouse>
 Loki            <connector/loki>
 MariaDB         <connector/mariadb>

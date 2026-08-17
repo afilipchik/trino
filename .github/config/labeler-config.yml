@@ -67,6 +67,10 @@ kafka:
   - changed-files:
     - any-glob-to-any-file: 'plugin/trino-kafka/**'
 
+kubernetes:
+  - changed-files:
+    - any-glob-to-any-file: 'plugin/trino-kubernetes/**'
+
 lakehouse:
   - changed-files:
     - any-glob-to-any-file: 'plugin/trino-lakehouse/**'

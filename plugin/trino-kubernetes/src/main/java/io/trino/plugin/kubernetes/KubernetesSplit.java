@@ -19,6 +19,4 @@ import io.trino.spi.connector.ConnectorSplit;
  * A whole-table scan; the page source paginates through the API server list endpoint.
  */
 public record KubernetesSplit()
-        implements ConnectorSplit
-{
-}
+        implements ConnectorSplit {}

@@ -16,8 +16,6 @@ package io.trino.plugin.kubernetes;
 import com.google.common.collect.ImmutableList;
 import io.trino.spi.type.RowType;
 
-import java.util.List;
-
 import static io.trino.spi.type.VarcharType.VARCHAR;
 
 /**

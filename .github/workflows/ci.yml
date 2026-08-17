@@ -483,6 +483,7 @@ jobs:
             - { modules: plugin/trino-iceberg, profile: floci-and-avro }
             - { modules: plugin/trino-ignite }
             - { modules: plugin/trino-kafka }
+            - { modules: plugin/trino-kubernetes }
             - { modules: plugin/trino-lakehouse }
             - { modules: plugin/trino-mariadb }
             - { modules: plugin/trino-mongodb }

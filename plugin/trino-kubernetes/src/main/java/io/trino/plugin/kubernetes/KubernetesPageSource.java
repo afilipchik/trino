@@ -58,7 +58,7 @@ public class KubernetesPageSource
                 .collect(toImmutableList()));
         this.pageSize = pageSize;
         if (table.limit().isPresent()) {
-            this.remainingRows = table.limit().getAsLong();
+            this.remainingRows = table.limit().orElseThrow();
         }
     }
 
@@ -154,7 +154,5 @@ public class KubernetesPageSource
     }
 
     @Override
-    public void close()
-    {
-    }
+    public void close() {}
 }

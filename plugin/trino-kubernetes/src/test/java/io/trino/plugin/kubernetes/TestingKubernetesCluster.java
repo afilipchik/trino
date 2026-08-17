@@ -78,7 +78,8 @@ public final class TestingKubernetesCluster
         for (String value : new String[] {
                 System.getProperty("testing.kubernetes.assets"),
                 System.getenv("TESTING_KUBERNETES_ASSETS"),
-                System.getenv("KUBEBUILDER_ASSETS")}) {
+                System.getenv("KUBEBUILDER_ASSETS"),
+        }) {
             if (value != null && !value.isEmpty()) {
                 Path path = Path.of(value);
                 if (Files.isExecutable(path.resolve("kube-apiserver")) && Files.isExecutable(path.resolve("etcd"))) {
@@ -127,10 +128,14 @@ public final class TestingKubernetesCluster
         etcd = start(
                 workDirectory.resolve("etcd.log"),
                 assets.resolve("etcd").toString(),
-                "--data-dir", etcdData.toString(),
-                "--listen-client-urls", "http://127.0.0.1:" + etcdClientPort,
-                "--advertise-client-urls", "http://127.0.0.1:" + etcdClientPort,
-                "--listen-peer-urls", "http://127.0.0.1:" + etcdPeerPort);
+                "--data-dir",
+                etcdData.toString(),
+                "--listen-client-urls",
+                "http://127.0.0.1:" + etcdClientPort,
+                "--advertise-client-urls",
+                "http://127.0.0.1:" + etcdClientPort,
+                "--listen-peer-urls",
+                "http://127.0.0.1:" + etcdPeerPort);
 
         apiServer = start(
                 workDirectory.resolve("kube-apiserver.log"),

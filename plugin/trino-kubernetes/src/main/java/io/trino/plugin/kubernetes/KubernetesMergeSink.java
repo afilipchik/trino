@@ -32,7 +32,6 @@ import java.util.concurrent.CompletableFuture;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.trino.plugin.kubernetes.KubernetesColumns.MERGE_ROW_ID_TYPE;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_INVALID_WRITE;
-import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;

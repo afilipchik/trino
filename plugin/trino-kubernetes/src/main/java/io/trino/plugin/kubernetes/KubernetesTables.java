@@ -26,9 +26,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.cache.CacheUtils.uncheckedCacheGet;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toSet;
 
 /**
@@ -92,7 +93,7 @@ public class KubernetesTables
     {
         return columns(resource).stream()
                 .filter(column -> !column.hidden())
-                .collect(ImmutableList.toImmutableList());
+                .collect(toImmutableList());
     }
 
     private List<KubernetesColumnHandle> loadColumns(ResourceDescriptor resource)

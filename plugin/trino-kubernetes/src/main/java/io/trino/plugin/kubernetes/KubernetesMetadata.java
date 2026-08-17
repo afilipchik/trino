@@ -17,7 +17,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.slice.Slice;
-import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -116,7 +115,7 @@ public class KubernetesMetadata
     public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session, ConnectorTableHandle handle, long limit)
     {
         KubernetesTableHandle table = (KubernetesTableHandle) handle;
-        if (table.limit().isPresent() && table.limit().getAsLong() <= limit) {
+        if (table.limit().isPresent() && table.limit().orElseThrow() <= limit) {
             return Optional.empty();
         }
         KubernetesTableHandle newHandle = new KubernetesTableHandle(
@@ -242,6 +241,5 @@ public class KubernetesMetadata
             List<ConnectorTableHandle> sourceTableHandles,
             Collection<Slice> fragments,
             Collection<ComputedStatistics> computedStatistics)
-    {
-    }
+    {}
 }

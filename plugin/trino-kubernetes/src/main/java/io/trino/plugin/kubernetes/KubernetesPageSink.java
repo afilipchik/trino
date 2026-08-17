@@ -68,7 +68,5 @@ public class KubernetesPageSink
     }
 
     @Override
-    public void abort()
-    {
-    }
+    public void abort() {}
 }

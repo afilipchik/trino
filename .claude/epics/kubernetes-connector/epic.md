@@ -1,9 +1,9 @@
 ---
 name: kubernetes-connector
-status: in-progress
+status: completed
 created: 2026-08-17T07:06:06Z
-updated: 2026-08-17T07:06:06Z
-progress: 78%
+updated: 2026-08-17T07:43:29Z
+progress: 100%
 prd: .claude/prds/kubernetes-connector.md
 github: (skipped — no gh CLI on this machine; local-only tracking)
 ---
@@ -108,14 +108,14 @@ mutations → CRD coverage → docs/polish. Iterate `./mvnw install
 airbase/checkstyle compliance.
 
 ## Tasks Created
-- [ ] 001.md - Module scaffold and build registration (parallel: true)
-- [ ] 002.md - TestingKubernetesCluster harness (envtest) (parallel: true)
-- [ ] 003.md - Kubernetes REST client and auth (parallel: true)
-- [ ] 004.md - Discovery and OpenAPI-to-Trino type mapping (parallel: false)
-- [ ] 005.md - Read path — metadata, splits, page source, pushdown (parallel: false)
-- [ ] 006.md - Insert path — page sink (parallel: true)
-- [ ] 007.md - Update and Delete via merge SPI (parallel: true)
-- [ ] 008.md - CRD end-to-end coverage and full integration suite (parallel: false)
-- [ ] 009.md - Docs, kind smoke script, final polish (parallel: false)
+- [x] 001.md - Module scaffold and build registration (parallel: true)
+- [x] 002.md - TestingKubernetesCluster harness (envtest) (parallel: true)
+- [x] 003.md - Kubernetes REST client and auth (parallel: true)
+- [x] 004.md - Discovery and OpenAPI-to-Trino type mapping (parallel: false)
+- [x] 005.md - Read path — metadata, splits, page source, pushdown (parallel: false)
+- [x] 006.md - Insert path — page sink (parallel: true)
+- [x] 007.md - Update and Delete via merge SPI (parallel: true)
+- [x] 008.md - CRD end-to-end coverage and full integration suite (parallel: false)
+- [x] 009.md - Docs, kind smoke script, final polish (parallel: false)
 
 Total tasks: 9 | Parallel: 5 | Sequential: 4
