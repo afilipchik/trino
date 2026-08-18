@@ -14,6 +14,7 @@
 package io.trino.plugin.kubernetes;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.trino.plugin.kubernetes.client.KubernetesClient;
 import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.spi.Page;
@@ -121,6 +122,15 @@ public class KubernetesPageSource
     private void appendObject(JsonNode object)
     {
         pageBuilder.declarePosition();
+        if (object instanceof ObjectNode objectNode) {
+            // list responses omit apiVersion and kind on the items
+            if (!objectNode.hasNonNull("apiVersion")) {
+                objectNode.put("apiVersion", resource.apiVersion());
+            }
+            if (!objectNode.hasNonNull("kind")) {
+                objectNode.put("kind", resource.kind());
+            }
+        }
         JsonNode metadata = object.path("metadata");
         for (int i = 0; i < columns.size(); i++) {
             KubernetesColumnHandle column = columns.get(i);
@@ -128,6 +138,7 @@ public class KubernetesPageSource
             switch (column.name()) {
                 case KubernetesColumns.NAME_COLUMN -> appendText(output, metadata.path("name"));
                 case KubernetesColumns.NAMESPACE_COLUMN -> appendText(output, metadata.path("namespace"));
+                case KubernetesColumns.MANIFEST_COLUMN -> VARCHAR.writeSlice(output, utf8Slice(object.toString()));
                 case KubernetesColumns.MERGE_ROW_ID_COLUMN -> appendRowId(output, metadata);
                 default -> JsonValueDecoder.appendTo(column.type(), object.get(column.jsonName()), output);
             }

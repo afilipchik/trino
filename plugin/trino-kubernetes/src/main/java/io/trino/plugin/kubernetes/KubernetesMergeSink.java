@@ -27,9 +27,11 @@ import io.trino.spi.connector.ConnectorMergeSink;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.plugin.kubernetes.KubernetesColumns.MERGE_ROW_ID_TYPE;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_INVALID_WRITE;
 import static io.trino.spi.type.TinyintType.TINYINT;
@@ -47,6 +49,7 @@ public class KubernetesMergeSink
     private final KubernetesClient client;
     private final ResourceDescriptor resource;
     private final List<KubernetesColumnHandle> dataColumns;
+    private final Set<String> updatedColumns;
     private final String defaultNamespace;
 
     public KubernetesMergeSink(KubernetesClient client, KubernetesMergeTableHandle mergeHandle, String defaultNamespace)
@@ -54,6 +57,7 @@ public class KubernetesMergeSink
         this.client = requireNonNull(client, "client is null");
         this.resource = mergeHandle.table().descriptor();
         this.dataColumns = mergeHandle.dataColumns();
+        this.updatedColumns = mergeHandle.updatedColumns();
         this.defaultNamespace = requireNonNull(defaultNamespace, "defaultNamespace is null");
     }
 
@@ -97,7 +101,21 @@ public class KubernetesMergeSink
     private void update(Page page, Block rowIdBlock, int position)
     {
         RowId rowId = rowId(rowIdBlock, position);
-        ObjectNode object = KubernetesObjectBuilder.buildObject(resource, dataColumns, page, position);
+        ObjectNode object;
+        if (updatedColumns.contains(KubernetesColumns.MANIFEST_COLUMN)) {
+            // the assigned manifest replaces the object; apply only the other assigned
+            // columns on top so stale unassigned column values do not clobber it
+            object = KubernetesObjectBuilder.buildObject(resource, dataColumns, page, position, updatedColumns);
+            KubernetesObjectBuilder.stripServerPopulatedFields(object);
+        }
+        else {
+            // the manifest channel carries the JSON read from the object; ignore it so
+            // it does not override the assigned typed columns
+            object = KubernetesObjectBuilder.buildObject(resource, dataColumns, page, position, dataColumns.stream()
+                    .map(KubernetesColumnHandle::name)
+                    .filter(name -> !name.equals(KubernetesColumns.MANIFEST_COLUMN))
+                    .collect(toImmutableSet()));
+        }
 
         Optional<String> newName = KubernetesObjectBuilder.metadataField(object, "name");
         if (newName.isPresent() && !newName.get().equals(rowId.name())) {

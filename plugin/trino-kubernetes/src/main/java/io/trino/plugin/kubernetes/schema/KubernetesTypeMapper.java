@@ -38,7 +38,7 @@ import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.StandardTypes.JSON;
-import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
 import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
@@ -187,7 +187,7 @@ public class KubernetesTypeMapper
                 yield new ArrayType(mapType(items, components, referenceStack, depth + 1));
             }
             case "string" -> switch (current.path("format").asText("")) {
-                case "date-time" -> TIMESTAMP_TZ_MILLIS;
+                case "date-time" -> TIMESTAMP_MILLIS;
                 case "byte" -> VARBINARY;
                 default -> VARCHAR;
             };

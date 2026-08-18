@@ -78,8 +78,8 @@ public class KubernetesTables
     }
 
     /**
-     * All columns of the table: the typed columns from the OpenAPI schema followed by
-     * the synthetic hidden columns (name, namespace, merge row id).
+     * All columns of the table: the synthetic name and namespace scalars, the typed
+     * columns from the OpenAPI schema, the raw manifest JSON, and the hidden merge row id.
      */
     public List<KubernetesColumnHandle> columns(ResourceDescriptor resource)
     {
@@ -108,6 +108,9 @@ public class KubernetesTables
             columns.add(KubernetesColumns.NAMESPACE_HANDLE);
         }
         columns.addAll(schemaColumns);
+        if (!names.contains(KubernetesColumns.MANIFEST_COLUMN)) {
+            columns.add(KubernetesColumns.MANIFEST_HANDLE);
+        }
         if (!names.contains(KubernetesColumns.MERGE_ROW_ID_COLUMN)) {
             columns.add(KubernetesColumns.MERGE_ROW_ID_HANDLE);
         }

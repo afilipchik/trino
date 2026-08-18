@@ -38,11 +38,12 @@ import java.util.List;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_SCHEMA_ERROR;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
-import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.StandardTypes.JSON;
-import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
+import static io.trino.spi.type.Timestamps.MICROSECONDS_PER_MILLISECOND;
+import static java.lang.Math.floorDiv;
 
 /**
  * Converts Trino values back to Kubernetes API JSON, the inverse of {@link JsonValueDecoder}.
@@ -119,8 +120,8 @@ public final class JsonValueEncoder
         if (type.equals(DOUBLE)) {
             return NODES.numberNode(DOUBLE.getDouble(block, position));
         }
-        if (type.equals(TIMESTAMP_TZ_MILLIS)) {
-            long epochMillis = unpackMillisUtc(TIMESTAMP_TZ_MILLIS.getLong(block, position));
+        if (type.equals(TIMESTAMP_MILLIS)) {
+            long epochMillis = floorDiv(TIMESTAMP_MILLIS.getLong(block, position), MICROSECONDS_PER_MILLISECOND);
             return NODES.textNode(Instant.ofEpochMilli(epochMillis).toString());
         }
         if (type.getBaseName().equals(JSON)) {

@@ -44,7 +44,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.connector.RowChangeParadigm.CHANGE_ONLY_UPDATED_COLUMNS;
 import static java.util.Objects.requireNonNull;
@@ -231,7 +233,11 @@ public class KubernetesMetadata
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support query retries");
         }
         KubernetesTableHandle table = (KubernetesTableHandle) tableHandle;
-        return new KubernetesMergeTableHandle(table, tables.visibleColumns(table.descriptor()));
+        Set<String> updatedColumns = updateCaseColumns.values().stream()
+                .flatMap(Collection::stream)
+                .map(column -> ((KubernetesColumnHandle) column).name())
+                .collect(toImmutableSet());
+        return new KubernetesMergeTableHandle(table, tables.visibleColumns(table.descriptor()), updatedColumns);
     }
 
     @Override

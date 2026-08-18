@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.IntegerType.INTEGER;
-import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
 import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
@@ -123,7 +123,7 @@ final class TestKubernetesTypeMapper
 
         RowType metadata = (RowType) types.get("metadata");
         assertThat(fieldType(metadata, "name")).isEqualTo(VARCHAR);
-        assertThat(fieldType(metadata, "creationTimestamp")).isEqualTo(TIMESTAMP_TZ_MILLIS);
+        assertThat(fieldType(metadata, "creationTimestamp")).isEqualTo(TIMESTAMP_MILLIS);
         MapType labels = (MapType) fieldType(metadata, "labels");
         assertThat(labels.getKeyType()).isEqualTo(VARCHAR);
         assertThat(labels.getValueType()).isEqualTo(VARCHAR);

@@ -39,12 +39,11 @@ import static io.trino.plugin.base.util.JsonTypeUtil.jsonParse;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_SCHEMA_ERROR;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
-import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.StandardTypes.JSON;
-import static io.trino.spi.type.TimeZoneKey.UTC_KEY;
-import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
+import static io.trino.spi.type.Timestamps.MICROSECONDS_PER_MILLISECOND;
 
 /**
  * Writes Kubernetes API JSON values into Trino blocks according to the mapped types.
@@ -129,10 +128,10 @@ public final class JsonValueDecoder
             DOUBLE.writeDouble(output, value.asDouble());
             return;
         }
-        if (type.equals(TIMESTAMP_TZ_MILLIS)) {
+        if (type.equals(TIMESTAMP_MILLIS)) {
             try {
                 long epochMillis = OffsetDateTime.parse(value.asText()).toInstant().toEpochMilli();
-                TIMESTAMP_TZ_MILLIS.writeLong(output, packDateTimeWithZone(epochMillis, UTC_KEY));
+                TIMESTAMP_MILLIS.writeLong(output, epochMillis * MICROSECONDS_PER_MILLISECOND);
             }
             catch (DateTimeParseException _) {
                 output.appendNull();

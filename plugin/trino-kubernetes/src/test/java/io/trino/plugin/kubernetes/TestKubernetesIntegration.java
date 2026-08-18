@@ -20,8 +20,7 @@ import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
-import java.time.ZonedDateTime;
+import java.time.LocalDateTime;
 
 import static io.trino.testing.assertions.Assert.assertEventually;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,7 +103,7 @@ final class TestKubernetesIntegration
         }
         assertThat(specType).contains("\"containers\" array(row(");
         assertThat(specType).contains("\"image\" varchar");
-        assertThat(metadataType).contains("\"creationTimestamp\" timestamp(3) with time zone");
+        assertThat(metadataType).contains("\"creationTimestamp\" timestamp(3)");
         assertThat(metadataType).contains("\"labels\" map(varchar, varchar)");
         assertThat(result.getMaterializedRows())
                 .extracting(row -> row.getField(0))
@@ -152,8 +151,85 @@ final class TestKubernetesIntegration
     void testCreationTimestampIsTimestamp()
     {
         Object value = computeScalar("SELECT metadata.creationTimestamp FROM core.pods WHERE name = 'pod-nginx'");
-        assertThat(value).isInstanceOf(ZonedDateTime.class);
-        assertThat((ZonedDateTime) value).isAfter(ZonedDateTime.parse("2020-01-01T00:00:00Z"));
+        assertThat(value).isInstanceOf(LocalDateTime.class);
+        assertThat((LocalDateTime) value).isAfter(LocalDateTime.parse("2020-01-01T00:00:00"));
+    }
+
+    @Test
+    void testRowColumnsCastToJson()
+    {
+        Object json = computeScalar("SELECT json_format(CAST(metadata AS JSON)) FROM core.pods WHERE name = 'pod-nginx'");
+        assertThat((String) json)
+                .contains("\"creationTimestamp\":")
+                .contains("\"labels\":");
+    }
+
+    @Test
+    void testManifestColumnRead()
+    {
+        Object manifest = computeScalar("SELECT manifest FROM core.pods WHERE name = 'pod-nginx'");
+        assertThat((String) manifest)
+                .contains("\"kind\":\"Pod\"")
+                .contains("\"name\":\"pod-nginx\"")
+                .contains("nginx:1.25.3");
+    }
+
+    @Test
+    void testInsertViaManifest()
+    {
+        assertUpdate(
+                """
+                INSERT INTO core.pods (name, namespace, manifest)
+                VALUES ('manifest-pod', 'default', '{"spec": {"containers": [{"name": "busybox", "image": "busybox:1.36", "command": ["sleep", "3600"]}]}}')
+                """,
+                1);
+        JsonNode pod = cluster.get("/api/v1/namespaces/default/pods/manifest-pod");
+        assertThat(pod.path("spec").path("containers").get(0).path("image").asText()).isEqualTo("busybox:1.36");
+        assertThat(pod.path("spec").path("containers").get(0).path("command").get(0).asText()).isEqualTo("sleep");
+        assertUpdate("DELETE FROM core.pods WHERE name = 'manifest-pod' AND namespace = 'default'", 1);
+    }
+
+    @Test
+    void testInsertManifestNameFromMetadata()
+    {
+        // name and namespace can come from the manifest itself
+        assertUpdate(
+                """
+                INSERT INTO core.configmaps (manifest)
+                VALUES ('{"metadata": {"name": "manifest-configmap", "namespace": "%s"}, "data": {"mode": "fast"}}')
+                """.formatted(TEST_NAMESPACE),
+                1);
+        JsonNode configMap = cluster.get("/api/v1/namespaces/" + TEST_NAMESPACE + "/configmaps/manifest-configmap");
+        assertThat(configMap.path("data").path("mode").asText()).isEqualTo("fast");
+        assertUpdate("DELETE FROM core.configmaps WHERE name = 'manifest-configmap' AND namespace = '%s'".formatted(TEST_NAMESPACE), 1);
+    }
+
+    @Test
+    void testUpdateViaManifest()
+    {
+        assertUpdate("INSERT INTO core.configmaps (name, namespace, data) VALUES ('manifest-updated', 'default', MAP(ARRAY['mode'], ARRAY['fast']))", 1);
+        assertUpdate(
+                """
+                UPDATE core.configmaps
+                SET manifest = '{"data": {"mode": "slow", "extra": "added"}}'
+                WHERE name = 'manifest-updated' AND namespace = 'default'
+                """,
+                1);
+        JsonNode configMap = cluster.get("/api/v1/namespaces/default/configmaps/manifest-updated");
+        assertThat(configMap.path("data").path("mode").asText()).isEqualTo("slow");
+        assertThat(configMap.path("data").path("extra").asText()).isEqualTo("added");
+        assertUpdate("DELETE FROM core.configmaps WHERE name = 'manifest-updated' AND namespace = 'default'", 1);
+    }
+
+    @Test
+    void testInsertInvalidManifest()
+    {
+        assertQueryFails(
+                "INSERT INTO core.configmaps (name, namespace, manifest) VALUES ('bad', 'default', 'not json{')",
+                "manifest is not valid JSON.*");
+        assertQueryFails(
+                "INSERT INTO core.configmaps (name, namespace, manifest) VALUES ('bad', 'default', '[1, 2]')",
+                "manifest must be a JSON object");
     }
 
     @Test
@@ -323,8 +399,8 @@ final class TestKubernetesIntegration
                 "VALUES ('widget-one', 'widget:1.0', 3, '2', 'alpha', 'fast')");
 
         Object activated = computeScalar("SELECT w.spec.activated FROM \"example.trino.io\".widgets w WHERE w.name = 'widget-one'");
-        assertThat(activated).isInstanceOf(ZonedDateTime.class);
-        assertThat(((ZonedDateTime) activated).toInstant()).isEqualTo(Instant.parse("2026-01-02T03:04:05Z"));
+        assertThat(activated).isInstanceOf(LocalDateTime.class);
+        assertThat((LocalDateTime) activated).isEqualTo(LocalDateTime.parse("2026-01-02T03:04:05"));
 
         // full DML cycle on the custom resource
         assertUpdate(
@@ -339,8 +415,8 @@ final class TestKubernetesIntegration
         assertUpdate(
                 """
                 UPDATE "example.trino.io".widgets
-                SET spec = CAST(ROW(TIMESTAMP '2026-05-06 07:08:09.000 UTC', 'widget:2.0', 5, MAP(ARRAY['mode'], ARRAY['slow']), '4', ARRAY['gamma'])
-                    AS ROW(activated timestamp(3) with time zone, image varchar, replicas bigint, settings map(varchar, varchar), size varchar, tags array(varchar)))
+                SET spec = CAST(ROW(TIMESTAMP '2026-05-06 07:08:09.000', 'widget:2.0', 5, MAP(ARRAY['mode'], ARRAY['slow']), '4', ARRAY['gamma'])
+                    AS ROW(activated timestamp(3), image varchar, replicas bigint, settings map(varchar, varchar), size varchar, tags array(varchar)))
                 WHERE name = 'widget-two'
                 """,
                 1);

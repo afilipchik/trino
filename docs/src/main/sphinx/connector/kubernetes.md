@@ -106,7 +106,9 @@ Columns are derived from the OpenAPI v3 schema of each resource:
 * - `string`
   - `VARCHAR`
 * - `string` with `date-time` format, such as `creationTimestamp`
-  - `TIMESTAMP(3) WITH TIME ZONE`
+  - `TIMESTAMP(3)` (Kubernetes serializes all timestamps in UTC; the plain
+    timestamp type keeps `ROW` columns castable to `JSON` with
+    `json_format(CAST(spec AS JSON))`)
 * - `string` with `byte` format
   - `VARBINARY`
 * - `integer`
@@ -125,6 +127,10 @@ In addition to the object fields, every table has synthetic `name` and
 `namespace` columns (`VARCHAR`) derived from the object metadata. Equality
 predicates on them are pushed down into the API server request as a scoped
 list and field selector.
+
+Every table also has a synthetic `manifest` column (`VARCHAR`) holding the raw
+JSON of the whole object, both as a readable escape hatch alongside the typed
+columns and as a writable target for partial inserts.
 
 ## Querying
 
@@ -160,6 +166,20 @@ SELECT 'pod-copy', 'staging', spec
 FROM example.core.pods
 WHERE name = 'pod-original' AND namespace = 'production';
 ```
+
+Because Trino row literals are positional and require every field, use the
+`manifest` column to create objects from partial JSON instead of spelling out
+the full typed row. The manifest becomes the base object, missing `apiVersion`
+and `kind` are filled in from the table, and typed columns overlay it:
+
+```sql
+INSERT INTO example.core.pods (name, namespace, manifest)
+VALUES ('busybox', 'default',
+    '{"spec": {"containers": [{"name": "busybox", "image": "busybox:1.36", "command": ["sleep", "3600"]}]}}');
+```
+
+`UPDATE ... SET manifest = ...` replaces the whole object with the given
+manifest, keeping the object's name, namespace, and `resourceVersion` guard.
 
 `UPDATE` replaces the changed objects. The update is guarded by the object's
 `resourceVersion` read during the scan, so concurrent modifications fail

@@ -14,24 +14,29 @@
 package io.trino.plugin.kubernetes;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 
 import java.util.List;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
 /**
  * @param dataColumns the visible table columns, in table order, matching the data
  *         channels of the pages the merge sink receives
+ * @param updatedColumns names of the columns assigned by the UPDATE, empty for
+ *         DELETE-only merges; unassigned columns carry the values read from the object
  */
-public record KubernetesMergeTableHandle(KubernetesTableHandle table, List<KubernetesColumnHandle> dataColumns)
+public record KubernetesMergeTableHandle(KubernetesTableHandle table, List<KubernetesColumnHandle> dataColumns, Set<String> updatedColumns)
         implements ConnectorMergeTableHandle
 {
     public KubernetesMergeTableHandle
     {
         requireNonNull(table, "table is null");
         dataColumns = ImmutableList.copyOf(dataColumns);
+        updatedColumns = ImmutableSet.copyOf(updatedColumns);
     }
 
     @Override
