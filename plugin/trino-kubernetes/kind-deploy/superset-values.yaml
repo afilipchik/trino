@@ -1,0 +1,60 @@
+service:
+  type: NodePort
+  nodePort:
+    http: 30088
+bootstrapScript: |
+  #!/bin/bash
+  set -e
+  uv pip install --python /app/.venv/bin/python trino psycopg2-binary
+  if [ ! -f ~/bootstrap ]; then echo "Running Superset with uid {{ .Values.runAsUser }}" > ~/bootstrap; fi
+configOverrides:
+  secret: |
+    SECRET_KEY = 'trino-superset-kind-demo-secret-key-1234567890'
+  trino_named_rows: |
+    # Trino sends ROW values positionally; the trino client wraps them in
+    # NamedRowTuple (which carries the field names from the schema), but Superset
+    # serializes tuples as bare JSON arrays, so SQL Lab shows "0: ..., 1: ..."
+    # instead of field names. Convert ROW values to named JSON objects. Deferred
+    # via FLASK_APP_MUTATOR because engine specs cannot be imported until the
+    # app is initialized.
+    def _patch_trino_named_rows(app):
+        from superset.utils import json as _sjson
+        from superset.db_engine_specs.trino import TrinoEngineSpec
+        from trino.types import NamedRowTuple
+
+        def _to_named(value):
+            if isinstance(value, NamedRowTuple):
+                return {
+                    (name if name else "field" + str(i)): _to_named(item)
+                    for i, (name, item) in enumerate(zip(value._names, value))
+                }
+            if isinstance(value, (list, tuple)):
+                return [_to_named(item) for item in value]
+            if isinstance(value, dict):
+                return {key: _to_named(item) for key, item in value.items()}
+            return value
+
+        _base_fetch_data = TrinoEngineSpec.fetch_data.__func__
+
+        @classmethod
+        def _fetch_data_named(cls, cursor, limit=None):
+            return [
+                tuple(
+                    _sjson.dumps(_to_named(cell), default=_sjson.json_iso_dttm_ser)
+                    if isinstance(cell, (NamedRowTuple, list, tuple, dict))
+                    else cell
+                    for cell in row
+                )
+                for row in _base_fetch_data(cls, cursor, limit)
+            ]
+
+        TrinoEngineSpec.fetch_data = _fetch_data_named
+
+    FLASK_APP_MUTATOR = _patch_trino_named_rows
+init:
+  adminUser:
+    username: admin
+    firstname: Superset
+    lastname: Admin
+    email: admin@superset.local
+    password: admin

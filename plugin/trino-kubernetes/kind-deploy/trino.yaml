@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trino
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trino
+  namespace: trino
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trino-sa-token
+  namespace: trino
+  annotations:
+    kubernetes.io/service-account.name: trino
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: trino-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: trino
+    namespace: trino
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog
+  namespace: trino
+data:
+  kubernetes.properties: |
+    connector.name=kubernetes
+    kubernetes.api-server-uri=https://kubernetes.default.svc
+    kubernetes.token=${ENV:K8S_TOKEN}
+    kubernetes.ca-certificate-path=/var/run/secrets/trino-sa/ca.crt
+    kubernetes.default-namespace=default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: trino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      serviceAccountName: trino
+      containers:
+        - name: trino
+          image: trino-k8s:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: K8S_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: trino-sa-token
+                  key: token
+          volumeMounts:
+            - name: sa-token
+              mountPath: /var/run/secrets/trino-sa
+              readOnly: true
+            - name: catalog
+              mountPath: /etc/trino/catalog
+              readOnly: true
+          resources:
+            requests:
+              memory: 2Gi
+              cpu: "1"
+            limits:
+              memory: 6Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: sa-token
+          secret:
+            secretName: trino-sa-token
+        - name: catalog
+          configMap:
+            name: trino-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: trino
+spec:
+  selector:
+    app: trino
+  ports:
+    - port: 8080
+      targetPort: 8080
