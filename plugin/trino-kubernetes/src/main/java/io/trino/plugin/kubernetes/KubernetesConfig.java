@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit;
 public class KubernetesConfig
 {
     private Optional<String> kubeconfigPath = Optional.empty();
+    private Optional<String> kubeconfigContext = Optional.empty();
+    private boolean multiClusterEnabled;
     private Optional<String> apiServerUri = Optional.empty();
     private Optional<String> token = Optional.empty();
     private Optional<String> caCertificatePath = Optional.empty();
@@ -48,6 +50,33 @@ public class KubernetesConfig
     public KubernetesConfig setKubeconfigPath(String kubeconfigPath)
     {
         this.kubeconfigPath = Optional.ofNullable(kubeconfigPath);
+        return this;
+    }
+
+    @NotNull
+    public Optional<String> getKubeconfigContext()
+    {
+        return kubeconfigContext;
+    }
+
+    @Config("kubernetes.kubeconfig-context")
+    @ConfigDescription("Kubeconfig context to use instead of the current context")
+    public KubernetesConfig setKubeconfigContext(String kubeconfigContext)
+    {
+        this.kubeconfigContext = Optional.ofNullable(kubeconfigContext);
+        return this;
+    }
+
+    public boolean isMultiClusterEnabled()
+    {
+        return multiClusterEnabled;
+    }
+
+    @Config("kubernetes.multi-cluster.enabled")
+    @ConfigDescription("Serve all kubeconfig contexts through one catalog with a synthetic cluster column and query-time fan-out")
+    public KubernetesConfig setMultiClusterEnabled(boolean multiClusterEnabled)
+    {
+        this.multiClusterEnabled = multiClusterEnabled;
         return this;
     }
 
@@ -154,5 +183,17 @@ public class KubernetesConfig
     public boolean isConnectionConfigurationValid()
     {
         return kubeconfigPath.isPresent() ^ apiServerUri.isPresent();
+    }
+
+    @AssertTrue(message = "'kubernetes.kubeconfig-context' requires 'kubernetes.kubeconfig-path'")
+    public boolean isKubeconfigContextValid()
+    {
+        return kubeconfigContext.isEmpty() || kubeconfigPath.isPresent();
+    }
+
+    @AssertTrue(message = "'kubernetes.multi-cluster.enabled' requires 'kubernetes.kubeconfig-path' and cannot be combined with 'kubernetes.kubeconfig-context'")
+    public boolean isMultiClusterConfigurationValid()
+    {
+        return !multiClusterEnabled || (kubeconfigPath.isPresent() && kubeconfigContext.isEmpty());
     }
 }

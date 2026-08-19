@@ -25,6 +25,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * @param namespaceFilter namespace equality constraint pushed down into API list calls
  * @param nameFilter object name equality constraint pushed down as a field selector
+ * @param clusterFilter cluster equality constraint used to prune the split fan-out
+ *         in multi-cluster catalogs
  */
 public record KubernetesTableHandle(
         String schemaName,
@@ -35,6 +37,7 @@ public record KubernetesTableHandle(
         boolean namespaced,
         Optional<String> namespaceFilter,
         Optional<String> nameFilter,
+        Optional<String> clusterFilter,
         OptionalLong limit)
         implements ConnectorTableHandle
 {
@@ -47,6 +50,7 @@ public record KubernetesTableHandle(
         requireNonNull(kind, "kind is null");
         requireNonNull(namespaceFilter, "namespaceFilter is null");
         requireNonNull(nameFilter, "nameFilter is null");
+        requireNonNull(clusterFilter, "clusterFilter is null");
         requireNonNull(limit, "limit is null");
     }
 
@@ -59,6 +63,7 @@ public record KubernetesTableHandle(
                 resource.version(),
                 resource.kind(),
                 resource.namespaced(),
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 OptionalLong.empty());

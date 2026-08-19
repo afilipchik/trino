@@ -14,7 +14,7 @@
 package io.trino.plugin.kubernetes;
 
 import com.google.inject.Inject;
-import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMergeSink;
@@ -35,13 +35,13 @@ import static java.util.Objects.requireNonNull;
 public class KubernetesPageSinkProvider
         implements ConnectorPageSinkProvider
 {
-    private final KubernetesClient client;
+    private final KubernetesClusterRegistry clusterRegistry;
     private final String defaultNamespace;
 
     @Inject
-    public KubernetesPageSinkProvider(KubernetesClient client, KubernetesConfig config)
+    public KubernetesPageSinkProvider(KubernetesClusterRegistry clusterRegistry, KubernetesConfig config)
     {
-        this.client = requireNonNull(client, "client is null");
+        this.clusterRegistry = requireNonNull(clusterRegistry, "clusterRegistry is null");
         this.defaultNamespace = config.getDefaultNamespace();
     }
 
@@ -65,7 +65,7 @@ public class KubernetesPageSinkProvider
             ConnectorPageSinkId pageSinkId)
     {
         KubernetesInsertTableHandle handle = (KubernetesInsertTableHandle) insertTableHandle;
-        return new KubernetesPageSink(client, handle.table().descriptor(), handle.columns(), defaultNamespace);
+        return new KubernetesPageSink(clusterRegistry, handle.table().descriptor(), handle.columns(), defaultNamespace);
     }
 
     @Override
@@ -76,6 +76,6 @@ public class KubernetesPageSinkProvider
             Optional<ConnectorTableCredentials> tableCredentials,
             ConnectorPageSinkId pageSinkId)
     {
-        return new KubernetesMergeSink(client, (KubernetesMergeTableHandle) mergeHandle, defaultNamespace);
+        return new KubernetesMergeSink(clusterRegistry, (KubernetesMergeTableHandle) mergeHandle, defaultNamespace);
     }
 }

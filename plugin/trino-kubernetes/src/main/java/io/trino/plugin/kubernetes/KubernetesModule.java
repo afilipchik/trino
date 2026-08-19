@@ -16,7 +16,7 @@ package io.trino.plugin.kubernetes;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
-import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.plugin.kubernetes.schema.KubernetesTypeMapper;
 
 import static io.airlift.configuration.ConfigBinder.configBinder;
@@ -28,7 +28,7 @@ public class KubernetesModule
     public void configure(Binder binder)
     {
         configBinder(binder).bindConfig(KubernetesConfig.class);
-        binder.bind(KubernetesClient.class).in(Scopes.SINGLETON);
+        binder.bind(KubernetesClusterRegistry.class).in(Scopes.SINGLETON);
         binder.bind(KubernetesTypeMapper.class).in(Scopes.SINGLETON);
         binder.bind(KubernetesTables.class).in(Scopes.SINGLETON);
         binder.bind(KubernetesMetadata.class).in(Scopes.SINGLETON);

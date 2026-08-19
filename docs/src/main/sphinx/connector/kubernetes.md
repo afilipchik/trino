@@ -50,6 +50,15 @@ The following table contains a list of all available configuration properties.
     The current context's cluster address, certificate authority, bearer token,
     and client certificate credentials are used. Exactly one of
     `kubernetes.kubeconfig-path` or `kubernetes.api-server-uri` must be set.
+* - `kubernetes.kubeconfig-context`
+  - Kubeconfig context to use instead of the current context. Point several
+    catalogs at the same kubeconfig with different contexts to expose several
+    clusters as separate catalogs. Requires `kubernetes.kubeconfig-path`.
+* - `kubernetes.multi-cluster.enabled`
+  - Serve all kubeconfig contexts through this one catalog. Every table gains a
+    `cluster` column holding the context name, and queries fan out to all
+    clusters. See [](kubernetes-multiple-clusters). Requires
+    `kubernetes.kubeconfig-path`; defaults to `false`.
 * - `kubernetes.api-server-uri`
   - URI of the Kubernetes API server, for example `https://127.0.0.1:6443`.
 * - `kubernetes.token`
@@ -86,6 +95,63 @@ SELECT * FROM example."networking.k8s.io".ingresses;
 Custom resource definitions are discovered automatically: their group appears
 as a schema and their resources as tables, typed from the CRD's structural
 schema.
+
+(kubernetes-multiple-clusters)=
+## Multiple clusters
+
+A kubeconfig file with several contexts can serve more than one cluster, in
+either of two ways.
+
+To expose each cluster as its own catalog, create one catalog properties file
+per cluster and select the context with `kubernetes.kubeconfig-context`:
+
+```text
+connector.name=kubernetes
+kubernetes.kubeconfig-path=/etc/kubernetes/kubeconfig
+kubernetes.kubeconfig-context=production-west
+```
+
+To query all clusters through a single catalog, enable multi-cluster mode:
+
+```text
+connector.name=kubernetes
+kubernetes.kubeconfig-path=/etc/kubernetes/kubeconfig
+kubernetes.multi-cluster.enabled=true
+```
+
+In multi-cluster mode every table gains a synthetic `cluster` column
+(`VARCHAR`) holding the kubeconfig context name of the cluster each object was
+read from. Reads fan out to every context in parallel, so cross-cluster
+aggregation is a plain SQL query:
+
+```sql
+SELECT cluster, count(*) FROM example.core.pods GROUP BY cluster;
+```
+
+An equality predicate on `cluster` prunes the fan-out so only the matching
+cluster is contacted:
+
+```sql
+SELECT name FROM example.core.pods WHERE cluster = 'production-west';
+```
+
+`INSERT` rows are routed to the cluster named by the inserted `cluster` value,
+defaulting to the current context's cluster when the column is not set.
+`UPDATE` and `DELETE` are routed to the cluster each row was read from; setting
+`cluster` to a different value in `UPDATE` fails, because objects cannot move
+between clusters.
+
+Table and column metadata comes from the default cluster (the kubeconfig
+current context). A resource that is not served by some cluster — for example
+a CRD installed on only one of them — simply contributes no rows from the
+clusters that lack it. All contexts must use bearer token or client certificate
+credentials, and every cluster is queried with the single set of credentials
+its context names, so restrict the catalog appropriately.
+
+The multi-cluster catalog is usually the better experience for BI tools: one
+connection, one schema tree, and the cluster is just another column to filter
+and group by. Prefer separate catalogs when clusters need different access
+controls or very different schema shapes.
 
 ## Type mapping
 
@@ -131,6 +197,10 @@ list and field selector.
 Every table also has a synthetic `manifest` column (`VARCHAR`) holding the raw
 JSON of the whole object, both as a readable escape hatch alongside the typed
 columns and as a writable target for partial inserts.
+
+In [multi-cluster catalogs](kubernetes-multiple-clusters), every table
+additionally has a synthetic `cluster` column (`VARCHAR`) with the kubeconfig
+context name the object was read from.
 
 ## Querying
 

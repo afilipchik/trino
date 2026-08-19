@@ -19,6 +19,7 @@ import io.trino.plugin.kubernetes.client.KubernetesClient;
 import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.RowBlockBuilder;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -29,6 +30,7 @@ import java.util.Optional;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.slice.Slices.utf8Slice;
+import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_RESOURCE_NOT_FOUND;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
@@ -36,6 +38,7 @@ public class KubernetesPageSource
         implements ConnectorPageSource
 {
     private final KubernetesClient client;
+    private final Optional<String> cluster;
     private final KubernetesTableHandle table;
     private final ResourceDescriptor resource;
     private final List<KubernetesColumnHandle> columns;
@@ -48,9 +51,10 @@ public class KubernetesPageSource
     private long completedBytes;
     private long remainingRows = Long.MAX_VALUE;
 
-    public KubernetesPageSource(KubernetesClient client, KubernetesTableHandle table, List<KubernetesColumnHandle> columns, int pageSize)
+    public KubernetesPageSource(KubernetesClient client, Optional<String> cluster, KubernetesTableHandle table, List<KubernetesColumnHandle> columns, int pageSize)
     {
         this.client = requireNonNull(client, "client is null");
+        this.cluster = requireNonNull(cluster, "cluster is null");
         this.table = requireNonNull(table, "table is null");
         this.resource = table.descriptor();
         this.columns = requireNonNull(columns, "columns is null");
@@ -89,12 +93,24 @@ public class KubernetesPageSource
         }
 
         int limit = (int) Math.min(pageSize, Math.max(1, remainingRows));
-        KubernetesClient.ObjectListPage listPage = client.listObjects(
-                resource,
-                table.namespaceFilter(),
-                table.nameFilter(),
-                limit,
-                firstPageLoaded ? continueToken : Optional.empty());
+        KubernetesClient.ObjectListPage listPage;
+        try {
+            listPage = client.listObjects(
+                    resource,
+                    table.namespaceFilter(),
+                    table.nameFilter(),
+                    limit,
+                    firstPageLoaded ? continueToken : Optional.empty());
+        }
+        catch (TrinoException e) {
+            if (!e.getErrorCode().equals(KUBERNETES_RESOURCE_NOT_FOUND.toErrorCode())) {
+                throw e;
+            }
+            // this cluster does not serve the resource (for example a CRD installed
+            // only on other clusters of a multi-cluster catalog): no rows
+            finished = true;
+            return null;
+        }
         firstPageLoaded = true;
         continueToken = listPage.continueToken();
 
@@ -136,6 +152,7 @@ public class KubernetesPageSource
             KubernetesColumnHandle column = columns.get(i);
             BlockBuilder output = pageBuilder.getBlockBuilder(i);
             switch (column.name()) {
+                case KubernetesColumns.CLUSTER_COLUMN -> appendVarchar(output, cluster);
                 case KubernetesColumns.NAME_COLUMN -> appendText(output, metadata.path("name"));
                 case KubernetesColumns.NAMESPACE_COLUMN -> appendText(output, metadata.path("namespace"));
                 case KubernetesColumns.MANIFEST_COLUMN -> VARCHAR.writeSlice(output, utf8Slice(object.toString()));
@@ -155,12 +172,23 @@ public class KubernetesPageSource
         }
     }
 
-    private static void appendRowId(BlockBuilder output, JsonNode metadata)
+    private static void appendVarchar(BlockBuilder output, Optional<String> value)
+    {
+        if (value.isPresent()) {
+            VARCHAR.writeSlice(output, utf8Slice(value.get()));
+        }
+        else {
+            output.appendNull();
+        }
+    }
+
+    private void appendRowId(BlockBuilder output, JsonNode metadata)
     {
         ((RowBlockBuilder) output).buildEntry(fieldBuilders -> {
             appendText(fieldBuilders.get(0), metadata.path("namespace"));
             appendText(fieldBuilders.get(1), metadata.path("name"));
             appendText(fieldBuilders.get(2), metadata.path("resourceVersion"));
+            appendVarchar(fieldBuilders.get(3), cluster);
         });
     }
 

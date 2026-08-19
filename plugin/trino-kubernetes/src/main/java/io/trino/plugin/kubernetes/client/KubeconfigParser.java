@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.google.common.collect.ImmutableList;
 import io.airlift.security.pem.PemReader;
 import io.trino.spi.TrinoException;
 
@@ -36,7 +37,7 @@ import java.util.Optional;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_AUTHENTICATION_ERROR;
 
 /**
- * Parses the subset of kubeconfig used for direct API server access: the current context's
+ * Parses the subset of kubeconfig used for direct API server access: a context's
  * cluster address, certificate authority, bearer token, and client certificate credentials.
  */
 public final class KubeconfigParser
@@ -45,17 +46,21 @@ public final class KubeconfigParser
 
     public static KubernetesAuth parse(Path kubeconfigPath)
     {
-        JsonNode config;
-        try {
-            config = new ObjectMapper(new YAMLFactory()).readTree(Files.readString(kubeconfigPath, StandardCharsets.UTF_8));
-        }
-        catch (IOException e) {
-            throw new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, "Failed to read kubeconfig: " + kubeconfigPath, e);
-        }
+        return parse(kubeconfigPath, Optional.empty());
+    }
 
-        String contextName = config.path("current-context").asText("");
-        JsonNode context = namedEntry(config, "contexts", contextName)
-                .orElseThrow(() -> new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, "Kubeconfig has no usable context: " + kubeconfigPath))
+    /**
+     * @param contextName context to resolve; when empty the current context is used,
+     *         falling back to the first context in the file
+     */
+    public static KubernetesAuth parse(Path kubeconfigPath, Optional<String> contextName)
+    {
+        JsonNode config = readKubeconfig(kubeconfigPath);
+        String name = contextName.orElseGet(() -> config.path("current-context").asText(""));
+        JsonNode context = namedEntry(config, "contexts", name)
+                .orElseThrow(() -> new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, contextName.isPresent()
+                        ? "Kubeconfig has no context named '%s': %s".formatted(name, kubeconfigPath)
+                        : "Kubeconfig has no usable context: " + kubeconfigPath))
                 .path("context");
 
         JsonNode cluster = namedEntry(config, "clusters", context.path("cluster").asText())
@@ -87,6 +92,49 @@ public final class KubeconfigParser
         Optional<PrivateKey> clientKey = readPrivateKey(user, baseDirectory);
 
         return new KubernetesAuth(URI.create(server), token, clientCertificates, clientKey, caCertificates, insecure);
+    }
+
+    /**
+     * All context names, in file order.
+     */
+    public static List<String> contextNames(Path kubeconfigPath)
+    {
+        JsonNode config = readKubeconfig(kubeconfigPath);
+        ImmutableList.Builder<String> names = ImmutableList.builder();
+        for (JsonNode entry : config.path("contexts")) {
+            String name = entry.path("name").asText("");
+            if (!name.isEmpty()) {
+                names.add(name);
+            }
+        }
+        return names.build();
+    }
+
+    /**
+     * The current context name, falling back to the first context in the file.
+     */
+    public static String defaultContextName(Path kubeconfigPath)
+    {
+        JsonNode config = readKubeconfig(kubeconfigPath);
+        List<String> names = contextNames(kubeconfigPath);
+        String current = config.path("current-context").asText("");
+        if (!current.isEmpty() && names.contains(current)) {
+            return current;
+        }
+        if (!names.isEmpty()) {
+            return names.get(0);
+        }
+        throw new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, "Kubeconfig has no usable context: " + kubeconfigPath);
+    }
+
+    private static JsonNode readKubeconfig(Path kubeconfigPath)
+    {
+        try {
+            return new ObjectMapper(new YAMLFactory()).readTree(Files.readString(kubeconfigPath, StandardCharsets.UTF_8));
+        }
+        catch (IOException e) {
+            throw new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, "Failed to read kubeconfig: " + kubeconfigPath, e);
+        }
     }
 
     private static Optional<JsonNode> namedEntry(JsonNode config, String section, String name)

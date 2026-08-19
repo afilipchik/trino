@@ -16,6 +16,7 @@ package io.trino.plugin.kubernetes;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorPageSourceProvider;
@@ -35,14 +36,14 @@ import static java.util.Objects.requireNonNull;
 public class KubernetesPageSourceProvider
         implements ConnectorPageSourceProvider
 {
-    private final KubernetesClient client;
-    private final KubernetesConfig config;
+    private final KubernetesClusterRegistry clusterRegistry;
+    private final int listPageSize;
 
     @Inject
-    public KubernetesPageSourceProvider(KubernetesClient client, KubernetesConfig config)
+    public KubernetesPageSourceProvider(KubernetesClusterRegistry clusterRegistry, KubernetesConfig config)
     {
-        this.client = requireNonNull(client, "client is null");
-        this.config = requireNonNull(config, "config is null");
+        this.clusterRegistry = requireNonNull(clusterRegistry, "clusterRegistry is null");
+        this.listPageSize = config.getListPageSize();
     }
 
     @Override
@@ -56,11 +57,15 @@ public class KubernetesPageSourceProvider
             DynamicFilter dynamicFilter,
             MemoryContext memoryContext)
     {
+        KubernetesSplit kubernetesSplit = (KubernetesSplit) split;
         KubernetesTableHandle handle = (KubernetesTableHandle) table;
         ImmutableList.Builder<KubernetesColumnHandle> kubernetesColumns = ImmutableList.builder();
         for (ColumnHandle column : columns) {
             kubernetesColumns.add((KubernetesColumnHandle) column);
         }
-        return new KubernetesPageSource(client, handle, kubernetesColumns.build(), config.getListPageSize());
+        KubernetesClient client = kubernetesSplit.cluster()
+                .map(clusterRegistry::client)
+                .orElseGet(clusterRegistry::defaultClient);
+        return new KubernetesPageSource(client, kubernetesSplit.cluster(), handle, kubernetesColumns.build(), listPageSize);
     }
 }

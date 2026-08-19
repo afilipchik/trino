@@ -15,8 +15,22 @@ package io.trino.plugin.kubernetes;
 
 import io.trino.spi.connector.ConnectorSplit;
 
+import java.util.Optional;
+
+import static java.util.Objects.requireNonNull;
+
 /**
- * A whole-table scan; the page source paginates through the API server list endpoint.
+ * A whole-table scan of one cluster; the page source paginates through that
+ * cluster's API server list endpoint.
+ *
+ * @param cluster cluster to scan in multi-cluster catalogs; empty for the single
+ *         configured cluster
  */
-public record KubernetesSplit()
-        implements ConnectorSplit {}
+public record KubernetesSplit(Optional<String> cluster)
+        implements ConnectorSplit
+{
+    public KubernetesSplit
+    {
+        requireNonNull(cluster, "cluster is null");
+    }
+}

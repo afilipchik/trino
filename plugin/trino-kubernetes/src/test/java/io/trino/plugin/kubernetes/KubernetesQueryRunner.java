@@ -33,10 +33,15 @@ public final class KubernetesQueryRunner
 
     public static Builder builder(TestingKubernetesCluster cluster)
     {
-        return new Builder()
+        return builder()
                 .addConnectorProperty("kubernetes.api-server-uri", cluster.uri().toString())
                 .addConnectorProperty("kubernetes.token", cluster.token())
-                .addConnectorProperty("kubernetes.insecure-tls", "true")
+                .addConnectorProperty("kubernetes.insecure-tls", "true");
+    }
+
+    public static Builder builder()
+    {
+        return new Builder()
                 .addConnectorProperty("kubernetes.metadata-cache-ttl", "1s");
     }
 

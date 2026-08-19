@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
 import io.airlift.slice.Slice;
 import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
@@ -46,19 +47,21 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 public class KubernetesMergeSink
         implements ConnectorMergeSink
 {
-    private final KubernetesClient client;
+    private final KubernetesClusterRegistry clusterRegistry;
     private final ResourceDescriptor resource;
     private final List<KubernetesColumnHandle> dataColumns;
     private final Set<String> updatedColumns;
     private final String defaultNamespace;
+    private final int clusterChannel;
 
-    public KubernetesMergeSink(KubernetesClient client, KubernetesMergeTableHandle mergeHandle, String defaultNamespace)
+    public KubernetesMergeSink(KubernetesClusterRegistry clusterRegistry, KubernetesMergeTableHandle mergeHandle, String defaultNamespace)
     {
-        this.client = requireNonNull(client, "client is null");
+        this.clusterRegistry = requireNonNull(clusterRegistry, "clusterRegistry is null");
         this.resource = mergeHandle.table().descriptor();
         this.dataColumns = mergeHandle.dataColumns();
         this.updatedColumns = mergeHandle.updatedColumns();
         this.defaultNamespace = requireNonNull(defaultNamespace, "defaultNamespace is null");
+        this.clusterChannel = KubernetesPageSink.clusterChannel(dataColumns);
     }
 
     @Override
@@ -89,13 +92,13 @@ public class KubernetesMergeSink
             namespace = Optional.of(defaultNamespace);
             KubernetesObjectBuilder.ensureMetadata(object).put("namespace", defaultNamespace);
         }
-        client.createObject(resource, namespace, object);
+        client(KubernetesPageSink.clusterValue(page, position, clusterChannel)).createObject(resource, namespace, object);
     }
 
     private void delete(Block rowIdBlock, int position)
     {
         RowId rowId = rowId(rowIdBlock, position);
-        client.deleteObject(resource, rowId.namespace(), rowId.name());
+        client(rowId.cluster()).deleteObject(resource, rowId.namespace(), rowId.name());
     }
 
     private void update(Page page, Block rowIdBlock, int position)
@@ -125,13 +128,24 @@ public class KubernetesMergeSink
         if (newNamespace.isPresent() && rowId.namespace().isPresent() && !newNamespace.get().equals(rowId.namespace().get())) {
             throw new TrinoException(KUBERNETES_INVALID_WRITE, "Moving Kubernetes objects across namespaces is not supported (metadata.namespace is immutable)");
         }
+        if (updatedColumns.contains(KubernetesColumns.CLUSTER_COLUMN)) {
+            Optional<String> newCluster = KubernetesPageSink.clusterValue(page, position, clusterChannel);
+            if (newCluster.isPresent() && !newCluster.equals(rowId.cluster())) {
+                throw new TrinoException(KUBERNETES_INVALID_WRITE, "Moving Kubernetes objects across clusters is not supported");
+            }
+        }
 
         ObjectNode metadata = KubernetesObjectBuilder.ensureMetadata(object);
         metadata.put("name", rowId.name());
         rowId.namespace().ifPresent(namespace -> metadata.put("namespace", namespace));
         rowId.resourceVersion().ifPresent(resourceVersion -> metadata.put("resourceVersion", resourceVersion));
 
-        client.replaceObject(resource, rowId.namespace(), rowId.name(), object);
+        client(rowId.cluster()).replaceObject(resource, rowId.namespace(), rowId.name(), object);
+    }
+
+    private KubernetesClient client(Optional<String> cluster)
+    {
+        return cluster.map(clusterRegistry::client).orElseGet(clusterRegistry::defaultClient);
     }
 
     private static RowId rowId(Block rowIdBlock, int position)
@@ -142,7 +156,8 @@ public class KubernetesMergeSink
         String name = readField(row, rawIndex, 1)
                 .orElseThrow(() -> new TrinoException(KUBERNETES_INVALID_WRITE, "Merge row id has no object name"));
         Optional<String> resourceVersion = readField(row, rawIndex, 2);
-        return new RowId(namespace, name, resourceVersion);
+        Optional<String> cluster = readField(row, rawIndex, 3);
+        return new RowId(namespace, name, resourceVersion, cluster);
     }
 
     private static Optional<String> readField(SqlRow row, int rawIndex, int field)
@@ -160,5 +175,5 @@ public class KubernetesMergeSink
         return completedFuture(ImmutableList.of());
     }
 
-    private record RowId(Optional<String> namespace, String name, Optional<String> resourceVersion) {}
+    private record RowId(Optional<String> namespace, String name, Optional<String> resourceVersion, Optional<String> cluster) {}
 }

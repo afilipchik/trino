@@ -21,15 +21,11 @@ import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.UncheckedExecutionException;
-import com.google.inject.Inject;
 import io.airlift.json.JsonMapperProvider;
-import io.airlift.security.pem.PemReader;
 import io.trino.cache.EvictableCacheBuilder;
 import io.trino.plugin.kubernetes.KubernetesConfig;
 import io.trino.spi.TrinoException;
-import jakarta.annotation.PreDestroy;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -37,9 +33,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.security.GeneralSecurityException;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
@@ -51,17 +44,19 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 
 import static com.google.common.base.Throwables.throwIfInstanceOf;
-import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_AUTHENTICATION_ERROR;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_CLIENT_ERROR;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_INVALID_WRITE;
+import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_RESOURCE_NOT_FOUND;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_SCHEMA_ERROR;
 import static io.trino.plugin.kubernetes.KubernetesErrorCode.KUBERNETES_WRITE_CONFLICT;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 /**
- * Minimal Kubernetes API client: discovery, OpenAPI v3 schemas, list/create/replace/delete.
- * All payloads are raw JSON trees; the connector is fully dynamic over resource types.
+ * Minimal Kubernetes API client for a single cluster: discovery, OpenAPI v3 schemas,
+ * list/create/replace/delete. All payloads are raw JSON trees; the connector is fully
+ * dynamic over resource types. Instances are created and owned by
+ * {@link KubernetesClusterRegistry}.
  */
 public class KubernetesClient
         implements AutoCloseable
@@ -76,11 +71,10 @@ public class KubernetesClient
     private final Supplier<Map<String, List<ResourceDescriptor>>> discovery;
     private final Cache<String, JsonNode> openApiDocuments;
 
-    @Inject
-    public KubernetesClient(KubernetesConfig config)
+    public KubernetesClient(KubernetesAuth auth, KubernetesConfig config)
     {
+        requireNonNull(auth, "auth is null");
         requireNonNull(config, "config is null");
-        KubernetesAuth auth = resolveAuth(config);
         this.baseUri = auth.serverUri();
         this.token = auth.token();
         this.httpClient = HttpClient.newBuilder()
@@ -93,29 +87,6 @@ public class KubernetesClient
                 .expireAfterWrite(ttlMillis, MILLISECONDS)
                 .maximumSize(1000)
                 .build();
-    }
-
-    private static KubernetesAuth resolveAuth(KubernetesConfig config)
-    {
-        if (config.getKubeconfigPath().isPresent()) {
-            return KubeconfigParser.parse(Path.of(config.getKubeconfigPath().get()));
-        }
-        Optional<List<X509Certificate>> caCertificates = Optional.empty();
-        if (config.getCaCertificatePath().isPresent()) {
-            try {
-                caCertificates = Optional.of(PemReader.readCertificateChain(new File(config.getCaCertificatePath().get())));
-            }
-            catch (IOException | GeneralSecurityException e) {
-                throw new TrinoException(KUBERNETES_AUTHENTICATION_ERROR, "Failed to load CA certificate: " + config.getCaCertificatePath().get(), e);
-            }
-        }
-        return new KubernetesAuth(
-                URI.create(config.getApiServerUri().orElseThrow()),
-                config.getToken(),
-                Optional.empty(),
-                Optional.empty(),
-                caCertificates,
-                config.isInsecureTls());
     }
 
     public Map<String, List<ResourceDescriptor>> resourcesBySchema()
@@ -293,6 +264,7 @@ public class KubernetesClient
         }
         String description = "Kubernetes API error %s for %s %s: %s".formatted(response.statusCode(), method, pathAndQuery, message);
         return switch (response.statusCode()) {
+            case 404 -> new TrinoException(KUBERNETES_RESOURCE_NOT_FOUND, description);
             case 409 -> new TrinoException(KUBERNETES_WRITE_CONFLICT, description);
             case 400, 422 -> new TrinoException(KUBERNETES_INVALID_WRITE, description);
             default -> new TrinoException(KUBERNETES_CLIENT_ERROR, description);
@@ -304,7 +276,6 @@ public class KubernetesClient
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
-    @PreDestroy
     @Override
     public void close()
     {

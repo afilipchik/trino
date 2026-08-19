@@ -37,6 +37,8 @@ final class TestKubernetesConfig
     {
         assertRecordedDefaults(recordDefaults(KubernetesConfig.class)
                 .setKubeconfigPath(null)
+                .setKubeconfigContext(null)
+                .setMultiClusterEnabled(false)
                 .setApiServerUri(null)
                 .setToken(null)
                 .setCaCertificatePath(null)
@@ -79,10 +81,27 @@ final class TestKubernetesConfig
     {
         Path kubeconfig = Files.createTempFile("kubeconfig", null);
 
-        KubernetesConfig config = new ConfigurationFactory(ImmutableMap.of("kubernetes.kubeconfig-path", kubeconfig.toString()))
+        KubernetesConfig config = new ConfigurationFactory(ImmutableMap.of(
+                "kubernetes.kubeconfig-path", kubeconfig.toString(),
+                "kubernetes.kubeconfig-context", "staging"))
                 .build(KubernetesConfig.class);
         assertThat(config.getKubeconfigPath()).isEqualTo(Optional.of(kubeconfig.toString()));
+        assertThat(config.getKubeconfigContext()).isEqualTo(Optional.of("staging"));
+        assertThat(config.isMultiClusterEnabled()).isFalse();
         assertThat(config.getApiServerUri()).isEmpty();
+    }
+
+    @Test
+    void testMultiClusterMapping()
+            throws IOException
+    {
+        Path kubeconfig = Files.createTempFile("kubeconfig", null);
+
+        KubernetesConfig config = new ConfigurationFactory(ImmutableMap.of(
+                "kubernetes.kubeconfig-path", kubeconfig.toString(),
+                "kubernetes.multi-cluster.enabled", "true"))
+                .build(KubernetesConfig.class);
+        assertThat(config.isMultiClusterEnabled()).isTrue();
     }
 
     @Test
@@ -100,5 +119,35 @@ final class TestKubernetesConfig
         assertThatThrownBy(() -> new ConfigurationFactory(ImmutableMap.<String, String>of())
                 .build(KubernetesConfig.class))
                 .hasMessageContaining("Exactly one of 'kubernetes.kubeconfig-path' or 'kubernetes.api-server-uri' must be specified");
+    }
+
+    @Test
+    void testKubeconfigContextRequiresKubeconfig()
+    {
+        assertThatThrownBy(() -> new ConfigurationFactory(ImmutableMap.of(
+                "kubernetes.api-server-uri", "https://127.0.0.1:6443",
+                "kubernetes.kubeconfig-context", "staging"))
+                .build(KubernetesConfig.class))
+                .hasMessageContaining("'kubernetes.kubeconfig-context' requires 'kubernetes.kubeconfig-path'");
+    }
+
+    @Test
+    void testMultiClusterRequiresKubeconfig()
+            throws IOException
+    {
+        Path kubeconfig = Files.createTempFile("kubeconfig", null);
+
+        assertThatThrownBy(() -> new ConfigurationFactory(ImmutableMap.of(
+                "kubernetes.api-server-uri", "https://127.0.0.1:6443",
+                "kubernetes.multi-cluster.enabled", "true"))
+                .build(KubernetesConfig.class))
+                .hasMessageContaining("'kubernetes.multi-cluster.enabled' requires 'kubernetes.kubeconfig-path'");
+
+        assertThatThrownBy(() -> new ConfigurationFactory(ImmutableMap.of(
+                "kubernetes.kubeconfig-path", kubeconfig.toString(),
+                "kubernetes.kubeconfig-context", "staging",
+                "kubernetes.multi-cluster.enabled", "true"))
+                .build(KubernetesConfig.class))
+                .hasMessageContaining("cannot be combined with 'kubernetes.kubeconfig-context'");
     }
 }

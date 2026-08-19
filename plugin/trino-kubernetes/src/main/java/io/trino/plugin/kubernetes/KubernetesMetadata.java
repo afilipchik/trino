@@ -129,6 +129,7 @@ public class KubernetesMetadata
                 table.namespaced(),
                 table.namespaceFilter(),
                 table.nameFilter(),
+                table.clusterFilter(),
                 OptionalLong.of(limit));
         return Optional.of(new LimitApplicationResult<>(newHandle, false, false));
     }
@@ -144,6 +145,7 @@ public class KubernetesMetadata
 
         Optional<String> namespaceFilter = table.namespaceFilter();
         Optional<String> nameFilter = table.nameFilter();
+        Optional<String> clusterFilter = table.clusterFilter();
         Map<ColumnHandle, Domain> remaining = new HashMap<>(summary.getDomains().get());
         boolean pushedDown = false;
 
@@ -164,6 +166,11 @@ public class KubernetesMetadata
                 remaining.remove(entry.getKey());
                 pushedDown = true;
             }
+            else if (column.name().equals(KubernetesColumns.CLUSTER_COLUMN) && clusterFilter.isEmpty()) {
+                clusterFilter = Optional.of(value);
+                remaining.remove(entry.getKey());
+                pushedDown = true;
+            }
         }
 
         if (!pushedDown) {
@@ -179,6 +186,7 @@ public class KubernetesMetadata
                 table.namespaced(),
                 namespaceFilter,
                 nameFilter,
+                clusterFilter,
                 table.limit());
         return Optional.of(new ConstraintApplicationResult<>(newHandle, TupleDomain.withColumnDomains(ImmutableMap.copyOf(remaining)), constraint.getExpression(), false));
     }

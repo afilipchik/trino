@@ -18,6 +18,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 import io.trino.cache.EvictableCacheBuilder;
 import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.plugin.kubernetes.schema.KubernetesTypeMapper;
 import io.trino.spi.connector.SchemaTableName;
@@ -40,13 +41,15 @@ public class KubernetesTables
 {
     private final KubernetesClient client;
     private final KubernetesTypeMapper typeMapper;
+    private final boolean clusterColumnEnabled;
     private final Cache<SchemaTableName, List<KubernetesColumnHandle>> columnsCache;
 
     @Inject
-    public KubernetesTables(KubernetesClient client, KubernetesTypeMapper typeMapper, KubernetesConfig config)
+    public KubernetesTables(KubernetesClusterRegistry clusterRegistry, KubernetesTypeMapper typeMapper, KubernetesConfig config)
     {
-        this.client = requireNonNull(client, "client is null");
+        this.client = clusterRegistry.defaultClient();
         this.typeMapper = requireNonNull(typeMapper, "typeMapper is null");
+        this.clusterColumnEnabled = clusterRegistry.isClusterColumnEnabled();
         this.columnsCache = EvictableCacheBuilder.newBuilder()
                 .expireAfterWrite(config.getMetadataCacheTtl().toMillis(), MILLISECONDS)
                 .maximumSize(10_000)
@@ -78,8 +81,9 @@ public class KubernetesTables
     }
 
     /**
-     * All columns of the table: the synthetic name and namespace scalars, the typed
-     * columns from the OpenAPI schema, the raw manifest JSON, and the hidden merge row id.
+     * All columns of the table: the synthetic cluster scalar (multi-cluster catalogs
+     * only), the synthetic name and namespace scalars, the typed columns from the
+     * OpenAPI schema, the raw manifest JSON, and the hidden merge row id.
      */
     public List<KubernetesColumnHandle> columns(ResourceDescriptor resource)
     {
@@ -101,6 +105,9 @@ public class KubernetesTables
         List<KubernetesColumnHandle> schemaColumns = typeMapper.columns(client.openApiDocument(resource), resource);
         Set<String> names = schemaColumns.stream().map(KubernetesColumnHandle::name).collect(toSet());
         ImmutableList.Builder<KubernetesColumnHandle> columns = ImmutableList.builder();
+        if (clusterColumnEnabled && !names.contains(KubernetesColumns.CLUSTER_COLUMN)) {
+            columns.add(KubernetesColumns.CLUSTER_HANDLE);
+        }
         if (!names.contains(KubernetesColumns.NAME_COLUMN)) {
             columns.add(KubernetesColumns.NAME_HANDLE);
         }

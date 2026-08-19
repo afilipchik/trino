@@ -16,9 +16,10 @@ package io.trino.plugin.kubernetes;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
 import io.airlift.slice.Slice;
-import io.trino.plugin.kubernetes.client.KubernetesClient;
+import io.trino.plugin.kubernetes.client.KubernetesClusterRegistry;
 import io.trino.plugin.kubernetes.client.ResourceDescriptor;
 import io.trino.spi.Page;
+import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorPageSink;
 
 import java.util.Collection;
@@ -26,23 +27,49 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
+import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
 public class KubernetesPageSink
         implements ConnectorPageSink
 {
-    private final KubernetesClient client;
+    private final KubernetesClusterRegistry clusterRegistry;
     private final ResourceDescriptor resource;
     private final List<KubernetesColumnHandle> columns;
     private final String defaultNamespace;
+    private final int clusterChannel;
 
-    public KubernetesPageSink(KubernetesClient client, ResourceDescriptor resource, List<KubernetesColumnHandle> columns, String defaultNamespace)
+    public KubernetesPageSink(KubernetesClusterRegistry clusterRegistry, ResourceDescriptor resource, List<KubernetesColumnHandle> columns, String defaultNamespace)
     {
-        this.client = requireNonNull(client, "client is null");
+        this.clusterRegistry = requireNonNull(clusterRegistry, "clusterRegistry is null");
         this.resource = requireNonNull(resource, "resource is null");
         this.columns = ImmutableList.copyOf(columns);
         this.defaultNamespace = requireNonNull(defaultNamespace, "defaultNamespace is null");
+        this.clusterChannel = clusterChannel(this.columns);
+    }
+
+    static int clusterChannel(List<KubernetesColumnHandle> columns)
+    {
+        for (int channel = 0; channel < columns.size(); channel++) {
+            KubernetesColumnHandle column = columns.get(channel);
+            if (column.name().equals(KubernetesColumns.CLUSTER_COLUMN) && KubernetesColumns.isSynthetic(column)) {
+                return channel;
+            }
+        }
+        return -1;
+    }
+
+    static Optional<String> clusterValue(Page page, int position, int clusterChannel)
+    {
+        if (clusterChannel < 0) {
+            return Optional.empty();
+        }
+        Block block = page.getBlock(clusterChannel);
+        if (block.isNull(position)) {
+            return Optional.empty();
+        }
+        return Optional.of(VARCHAR.getSlice(block, position).toStringUtf8());
     }
 
     @Override
@@ -56,7 +83,10 @@ public class KubernetesPageSink
                 namespace = Optional.of(defaultNamespace);
                 KubernetesObjectBuilder.ensureMetadata(object).put("namespace", defaultNamespace);
             }
-            client.createObject(resource, namespace, object);
+            Optional<String> cluster = clusterValue(page, position, clusterChannel);
+            cluster.map(clusterRegistry::client)
+                    .orElseGet(clusterRegistry::defaultClient)
+                    .createObject(resource, namespace, object);
         }
         return NOT_BLOCKED;
     }
