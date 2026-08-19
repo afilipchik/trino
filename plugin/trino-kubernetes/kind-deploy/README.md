@@ -5,6 +5,20 @@ with the `kubernetes` catalog authenticating in-cluster via a service account)
 and Apache Superset pointed at it. Requires `docker`, `kind`, `kubectl`, and
 `helm`. No host JDK is needed; the build runs in a container.
 
+The whole flow below is automated by
+[`scripts/setup-kind-trino-superset.sh`](../../../scripts/setup-kind-trino-superset.sh),
+which also maps the NodePorts to localhost (so it works on macOS with Docker
+Desktop) and, with `--multi-cluster`, adds a second kind cluster served through
+the same catalog via the connector's `kubernetes.multi-cluster.enabled` mode:
+
+```bash
+scripts/setup-kind-trino-superset.sh                  # Superset on :30088, Trino on :30080
+scripts/setup-kind-trino-superset.sh --multi-cluster  # plus a second cluster ('local'/'west')
+scripts/setup-kind-trino-superset.sh --delete         # tear down
+```
+
+The rest of this file documents the same steps for running them by hand.
+
 ## Build the Trino image
 
 Build the slim server plus this plugin (in a JDK 25 container; `trino-builder`

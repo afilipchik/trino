@@ -83,6 +83,9 @@ spec:
             - name: catalog
               mountPath: /etc/trino/catalog
               readOnly: true
+            - name: kubeconfig
+              mountPath: /etc/trino/kubeconfig
+              readOnly: true
           resources:
             requests:
               memory: 2Gi
@@ -109,6 +112,11 @@ spec:
         - name: catalog
           configMap:
             name: trino-catalog
+        # only populated by setup-kind-trino-superset.sh --multi-cluster
+        - name: kubeconfig
+          secret:
+            secretName: trino-kubeconfig
+            optional: true
 ---
 apiVersion: v1
 kind: Service
@@ -121,3 +129,19 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+---
+# host access without a port-forward; the setup script maps this NodePort to
+# localhost:30080 through the kind node
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-nodeport
+  namespace: trino
+spec:
+  type: NodePort
+  selector:
+    app: trino
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
