@@ -14,24 +14,19 @@
 package io.trino.plugin.federation;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import io.trino.plugin.federation.RegionalQueryCapture.Captured;
 import io.trino.sql.planner.plan.AggregationNode;
 import io.trino.sql.planner.plan.ProjectNode;
 import io.trino.testing.AbstractTestQueryFramework;
-import io.trino.testing.MaterializedResult;
-import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD;
@@ -48,6 +43,7 @@ final class TestFederationAggregationPushdown
         extends AbstractTestQueryFramework
 {
     private FederationQueryRunner federation;
+    private RegionalQueryCapture capture;
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -57,6 +53,7 @@ final class TestFederationAggregationPushdown
                 .addRegion("east")
                 .addRegion("west")
                 .build());
+        capture = new RegionalQueryCapture(federation, "%\"memory\".\"default\".%");
 
         federation.executeOnAllRegions(
                 """
@@ -158,7 +155,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT count(*) FROM sales";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.result().getOnlyValue()).isEqualTo(10L);
         for (String region : federation.regionNames()) {
             // the partial query returns exactly one pre-aggregated row by construction
@@ -173,7 +170,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT category, sum(id) FROM sales GROUP BY category";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.result().getRowCount()).isEqualTo(4);
         assertThat(captured.allRemoteQueries())
                 .hasSize(2)
@@ -182,12 +179,36 @@ final class TestFederationAggregationPushdown
     }
 
     @Test
+    void testGroupedAggregateShipsOneRowPerLocalGroup()
+    {
+        String sql = "SELECT category, count(*), sum(id) FROM sales GROUP BY category";
+        assertThat(query(sql)).isFullyPushedDown();
+
+        Captured captured = capture.execute(sql);
+        for (String region : federation.regionNames()) {
+            // the rows shipped across the region boundary are exactly the result rows of the
+            // partial query the region received, so re-running that captured query text on
+            // the region counts them
+            String remoteSql = getOnlyElement(captured.remoteQueries(region));
+            long shippedRows = federation.executeOnRegion(region, remoteSql).getRowCount();
+            long localGroups = (long) federation.executeOnRegion(
+                    region,
+                    "SELECT count(*) FROM (SELECT 1 FROM sales GROUP BY category)").getOnlyValue();
+            long localRows = (long) federation.executeOnRegion(region, "SELECT count(*) FROM sales").getOnlyValue();
+            assertThat(shippedRows).isEqualTo(localGroups);
+            assertThat(shippedRows).isLessThan(localRows);
+        }
+        // east holds groups {fruit, veg, NULL}, west {fruit, veg, dairy, NULL}
+        assertThat(captured.result().getRowCount()).isEqualTo(4);
+    }
+
+    @Test
     void testFilterComposesWithAggregation()
     {
         String sql = "SELECT category, count(*) FROM sales WHERE id <= 8 GROUP BY category";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.allRemoteQueries())
                 .hasSize(2)
                 .allMatch(remoteSql -> remoteSql.contains("WHERE \"id\" <= 8")
@@ -200,7 +221,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT sum(id) FROM sales WHERE _region = 'east'";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.result().getOnlyValue()).isEqualTo(15L);
         assertThat(captured.remoteQueries("west")).isEmpty();
         assertThat(captured.remoteQueries("east"))
@@ -213,7 +234,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT count(*), sum(id) FROM sales WHERE _region = 'nowhere'";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.result().getMaterializedRows()).hasSize(1);
         assertThat(captured.result().getMaterializedRows().getFirst().getFields()).containsExactly(0L, null);
         assertThat(captured.remoteQueries("east")).isEmpty();
@@ -226,7 +247,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT _region, count(*), sum(id) FROM sales GROUP BY _region";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         List<String> rows = captured.result().getMaterializedRows().stream()
                 .map(row -> row.getFields().toString())
                 .sorted()
@@ -260,7 +281,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT DISTINCT category FROM sales";
         assertThat(query(sql)).isFullyPushedDown();
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         assertThat(captured.allRemoteQueries())
                 .hasSize(2)
                 .allMatch(remoteSql -> remoteSql.contains("GROUP BY \"category\""));
@@ -383,7 +404,7 @@ final class TestFederationAggregationPushdown
         String sql = "SELECT sum(id) FROM (SELECT id FROM sales LIMIT 100)";
         assertThat(query(sql)).matches("VALUES BIGINT '55'");
 
-        Captured captured = executeAndCapture(sql);
+        Captured captured = capture.execute(sql);
         // the regions receive the pre-reducing LIMIT scan, not an aggregate
         assertThat(captured.allRemoteQueries())
                 .isNotEmpty()
@@ -400,64 +421,5 @@ final class TestFederationAggregationPushdown
                             DATE '2024-01-01', DATE '2024-08-01',
                             TIMESTAMP '2024-01-01 10:00:00.000', TIMESTAMP '2024-08-01 20:00:00.123'
                         """);
-    }
-
-    /**
-     * Runs a query on the central cluster and captures the queries each region received
-     * because of it. The diff is keyed on query ids because {@code system.runtime.queries}
-     * evicts old entries, so the log may shrink between the snapshots.
-     */
-    private Captured executeAndCapture(String sql)
-    {
-        Map<String, Set<String>> before = new HashMap<>();
-        for (String region : federation.regionNames()) {
-            before.put(region, regionQueryLog(region).keySet());
-        }
-        MaterializedResult result = federation.execute(sql);
-        ImmutableMap.Builder<String, List<String>> newQueries = ImmutableMap.builder();
-        for (String region : federation.regionNames()) {
-            Set<String> knownQueryIds = before.get(region);
-            newQueries.put(region, regionQueryLog(region).entrySet().stream()
-                    .filter(entry -> !knownQueryIds.contains(entry.getKey()))
-                    .map(Map.Entry::getValue)
-                    .collect(toImmutableList()));
-        }
-        return new Captured(result, newQueries.buildOrThrow());
-    }
-
-    /**
-     * Scan and partial-aggregate queries this region received, keyed by query id, oldest
-     * first. Metadata listing queries also carry the {@code trino-federation} source but
-     * target {@code information_schema}, so they are excluded.
-     */
-    private Map<String, String> regionQueryLog(String region)
-    {
-        Map<String, String> log = new LinkedHashMap<>();
-        for (MaterializedRow row : federation.executeOnRegion(
-                        region,
-                        """
-                        SELECT query_id, query FROM system.runtime.queries
-                        WHERE source = 'trino-federation' AND query LIKE '%"memory"."default".%'
-                        ORDER BY created
-                        """)
-                .getMaterializedRows()) {
-            log.put((String) row.getField(0), (String) row.getField(1));
-        }
-        return log;
-    }
-
-    private record Captured(MaterializedResult result, Map<String, List<String>> remoteQueriesByRegion)
-    {
-        List<String> remoteQueries(String region)
-        {
-            return remoteQueriesByRegion.get(region);
-        }
-
-        List<String> allRemoteQueries()
-        {
-            return remoteQueriesByRegion.values().stream()
-                    .flatMap(List::stream)
-                    .collect(toImmutableList());
-        }
     }
 }
