@@ -1,0 +1,145 @@
+# Two "regional" Trino clusters (single-node Deployments) inside one kind
+# cluster. Each serves a disjoint shard of TPC-H tiny data from its memory
+# catalog; the shards are seeded by scripts/setup-kind-trino-federation.sh via
+# CREATE TABLE memory.default.<table> AS SELECT ... FROM tpch.tiny.<table>
+# with a region-specific orderkey predicate.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trino-federation
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-region-catalog
+  namespace: trino-federation
+data:
+  # The catalog name must match federation.remote-catalog on the central
+  # cluster ("memory").
+  memory.properties: |
+    connector.name=memory
+    memory.max-data-per-node=512MB
+  tpch.properties: |
+    connector.name=tpch
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-region-east
+  namespace: trino-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino-region-east
+  template:
+    metadata:
+      labels:
+        app: trino-region-east
+    spec:
+      containers:
+        - name: trino
+          image: trino-federation:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/trino/catalog
+              readOnly: true
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: catalog
+          configMap:
+            name: trino-region-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-region-east
+  namespace: trino-federation
+spec:
+  selector:
+    app: trino-region-east
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-region-west
+  namespace: trino-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino-region-west
+  template:
+    metadata:
+      labels:
+        app: trino-region-west
+    spec:
+      containers:
+        - name: trino
+          image: trino-federation:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/trino/catalog
+              readOnly: true
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: catalog
+          configMap:
+            name: trino-region-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-region-west
+  namespace: trino-federation
+spec:
+  selector:
+    app: trino-region-west
+  ports:
+    - port: 8080
+      targetPort: 8080

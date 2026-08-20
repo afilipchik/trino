@@ -1,0 +1,75 @@
+# Central Trino with the trino-federation plugin: one "federation" catalog
+# presenting the regional memory catalogs as a single logical catalog with a
+# synthetic _region column. Depends on regions.yaml (namespace and the two
+# regional Services).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-central-catalog
+  namespace: trino-federation
+data:
+  federation.properties: |
+    connector.name=trino_federation
+    federation.regions=east=http://trino-region-east:8080,west=http://trino-region-west:8080
+    federation.remote-catalog=memory
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-central
+  namespace: trino-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino-central
+  template:
+    metadata:
+      labels:
+        app: trino-central
+    spec:
+      containers:
+        - name: trino
+          image: trino-federation:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/trino/catalog
+              readOnly: true
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: catalog
+          configMap:
+            name: trino-central-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-central
+  namespace: trino-federation
+spec:
+  selector:
+    app: trino-central
+  ports:
+    - port: 8080
+      targetPort: 8080
