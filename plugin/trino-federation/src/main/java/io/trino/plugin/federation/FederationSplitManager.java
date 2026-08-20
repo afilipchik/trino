@@ -15,13 +15,19 @@ package io.trino.plugin.federation;
 
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
+import io.trino.spi.connector.FixedSplitSource;
 
+import java.util.List;
 import java.util.Set;
+
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 
 public class FederationSplitManager
         implements ConnectorSplitManager
@@ -34,7 +40,11 @@ public class FederationSplitManager
             Set<ColumnHandle> dynamicFilterColumns,
             Constraint constraint)
     {
-        // Unreachable until FederationMetadata exposes tables
-        throw new UnsupportedOperationException("Federation splits are not implemented yet");
+        FederationTableHandle handle = (FederationTableHandle) table;
+        checkState(handle.aggregation().isEmpty(), "aggregated scans use a single fan-out split, not per-region splits");
+        List<ConnectorSplit> splits = handle.activeRegions().stream()
+                .map(region -> (ConnectorSplit) new FederationSplit(region))
+                .collect(toImmutableList());
+        return new FixedSplitSource(splits);
     }
 }

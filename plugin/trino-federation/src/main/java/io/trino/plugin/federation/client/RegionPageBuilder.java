@@ -57,6 +57,11 @@ public class RegionPageBuilder
         return pageBuilder.isEmpty();
     }
 
+    public long retainedSizeInBytes()
+    {
+        return pageBuilder.getRetainedSizeInBytes();
+    }
+
     /**
      * Returns the accumulated rows as a page and resets the builder.
      */
