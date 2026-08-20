@@ -91,6 +91,12 @@
         </artifact>
     </artifactSet>
 
+    <artifactSet to="plugin/federation">
+        <artifact id="${project.groupId}:trino-federation:zip:${project.version}">
+            <unpack />
+        </artifact>
+    </artifactSet>
+
     <artifactSet to="plugin/google-sheets">
         <artifact id="${project.groupId}:trino-google-sheets:zip:${project.version}">
             <unpack />
