@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.federation;
 
-import io.trino.plugin.federation.sql.AggregateKind;
 import io.trino.spi.type.Type;
 
 import java.util.Optional;
@@ -22,17 +21,17 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
- * One aggregate pushed to the regions as a partial and combined by the connector.
+ * One aggregate pushed to the regions as partials and combined by the connector. The remote
+ * partial queries are derived from the combine kind by {@link AggregateCombiners}: one
+ * partial column per aggregate, except the AVG kinds which read a remote sum+count pair.
  *
- * @param kind remote aggregate function
  * @param argument column the aggregate is applied to, empty only for {@code count(*)}
- * @param outputName alias of the aggregate in the remote SELECT list and name of the
- *         resulting output column
+ * @param outputName name of the synthetic output column; also the alias (or alias prefix,
+ *         for the AVG kinds) of the partials in the remote SELECT list
  * @param outputType Trino type of the combined result
  * @param combineKind how per-region partials are merged into the final value
  */
 public record FederationAggregateColumn(
-        AggregateKind kind,
         Optional<FederationColumnHandle> argument,
         String outputName,
         Type outputType,
@@ -40,13 +39,12 @@ public record FederationAggregateColumn(
 {
     public FederationAggregateColumn
     {
-        requireNonNull(kind, "kind is null");
         requireNonNull(argument, "argument is null");
         requireNonNull(outputName, "outputName is null");
         requireNonNull(outputType, "outputType is null");
         requireNonNull(combineKind, "combineKind is null");
-        checkArgument((kind == AggregateKind.COUNT_ALL) == argument.isEmpty(),
-                "count(*) takes no argument and every other aggregate requires one: %s",
-                kind);
+        checkArgument(argument.isPresent() || combineKind == CombineKind.COUNT_SUM,
+                "count(*) is the only aggregate that takes no argument: %s",
+                combineKind);
     }
 }

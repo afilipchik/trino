@@ -39,7 +39,8 @@ final class TestFederationConfig
                 .setUser("federation")
                 .setPassword(null)
                 .setConnectTimeout(new Duration(10, SECONDS))
-                .setRequestTimeout(new Duration(30, SECONDS)));
+                .setRequestTimeout(new Duration(30, SECONDS))
+                .setFanoutThreads(16));
     }
 
     @Test
@@ -52,6 +53,7 @@ final class TestFederationConfig
                 .put("federation.password", "secret")
                 .put("federation.connect-timeout", "5s")
                 .put("federation.request-timeout", "60s")
+                .put("federation.fanout-threads", "4")
                 .buildOrThrow();
 
         FederationConfig expected = new FederationConfig()
@@ -60,7 +62,8 @@ final class TestFederationConfig
                 .setUser("reporting")
                 .setPassword("secret")
                 .setConnectTimeout(new Duration(5, SECONDS))
-                .setRequestTimeout(new Duration(60, SECONDS));
+                .setRequestTimeout(new Duration(60, SECONDS))
+                .setFanoutThreads(4);
 
         assertFullMapping(properties, expected);
     }

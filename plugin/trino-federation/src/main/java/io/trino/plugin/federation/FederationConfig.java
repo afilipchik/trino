@@ -20,6 +20,7 @@ import io.airlift.configuration.ConfigDescription;
 import io.airlift.configuration.ConfigSecuritySensitive;
 import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
@@ -42,6 +43,7 @@ public class FederationConfig
     private Optional<String> password = Optional.empty();
     private Duration connectTimeout = new Duration(10, SECONDS);
     private Duration requestTimeout = new Duration(30, SECONDS);
+    private int fanoutThreads = 16;
 
     @NotEmpty(message = "must list at least one region")
     public List<Region> getRegions()
@@ -127,6 +129,20 @@ public class FederationConfig
     public FederationConfig setRequestTimeout(Duration requestTimeout)
     {
         this.requestTimeout = requestTimeout;
+        return this;
+    }
+
+    @Min(1)
+    public int getFanoutThreads()
+    {
+        return fanoutThreads;
+    }
+
+    @Config("federation.fanout-threads")
+    @ConfigDescription("Maximum number of concurrent regional queries for an aggregated scan")
+    public FederationConfig setFanoutThreads(int fanoutThreads)
+    {
+        this.fanoutThreads = fanoutThreads;
         return this;
     }
 

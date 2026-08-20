@@ -25,6 +25,8 @@ import io.trino.plugin.federation.client.RegionClients;
 import io.trino.plugin.federation.client.RemoteColumnMetadata;
 import io.trino.plugin.federation.sql.RemoteSqlBuilder;
 import io.trino.spi.TrinoException;
+import io.trino.spi.connector.AggregateFunction;
+import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -45,6 +47,8 @@ import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
+import io.trino.spi.type.DecimalType;
+import io.trino.spi.type.Type;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -67,6 +71,14 @@ import static io.trino.plugin.federation.FederationColumns.REGION_COLUMN;
 import static io.trino.plugin.federation.FederationColumns.REGION_COLUMN_NAME;
 import static io.trino.plugin.federation.FederationErrorCode.FEDERATION_REGION_UNREACHABLE;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
+import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.DecimalType.createDecimalType;
+import static io.trino.spi.type.Decimals.MAX_PRECISION;
+import static io.trino.spi.type.DoubleType.DOUBLE;
+import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -306,6 +318,153 @@ public class FederationMetadata
             ordering.add(new FederationSortColumn(column, sortItem.getSortOrder()));
         }
         return Optional.of(new TopNApplicationResult<>(handle.withTopN(new FederationTopN(ordering.build(), topNCount)), false, false));
+    }
+
+    /**
+     * Pushes a single-grouping-set aggregation of supported shapes into the handle. The
+     * resulting scan is one fan-out split whose page source runs the partial aggregate on
+     * every active region and combines the partials into final values, because the engine
+     * does not re-aggregate connector output. Any unsupported shape returns empty and the
+     * engine aggregates raw rows instead.
+     */
+    @Override
+    public Optional<AggregationApplicationResult<ConnectorTableHandle>> applyAggregation(
+            ConnectorSession session,
+            ConnectorTableHandle table,
+            List<AggregateFunction> aggregates,
+            Map<String, ColumnHandle> assignments,
+            List<List<ColumnHandle>> groupingSets)
+    {
+        FederationTableHandle handle = (FederationTableHandle) table;
+        if (handle.aggregation().isPresent()) {
+            return Optional.empty();
+        }
+        if (handle.limit().isPresent() || handle.topN().isPresent()) {
+            // a pushed LIMIT / ORDER BY ... LIMIT is not guaranteed and only pre-reduces,
+            // so per-region partials computed below one would aggregate the wrong rows
+            return Optional.empty();
+        }
+        if (groupingSets.size() != 1) {
+            return Optional.empty();
+        }
+
+        ImmutableList.Builder<FederationColumnHandle> groupingColumnsBuilder = ImmutableList.builder();
+        for (ColumnHandle groupingColumn : groupingSets.getFirst()) {
+            FederationColumnHandle column = (FederationColumnHandle) groupingColumn;
+            if (!column.regionColumn() && !RemoteSqlBuilder.isPushableType(column.type())) {
+                return Optional.empty();
+            }
+            groupingColumnsBuilder.add(column);
+        }
+        List<FederationColumnHandle> groupingColumns = groupingColumnsBuilder.build();
+        if (groupingColumns.isEmpty() && aggregates.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Set<String> existingNames = handle.columns().stream()
+                .map(FederationColumnHandle::name)
+                .collect(toImmutableSet());
+        ImmutableList.Builder<FederationAggregateColumn> aggregateColumns = ImmutableList.builder();
+        ImmutableList.Builder<ConnectorExpression> projections = ImmutableList.builder();
+        ImmutableList.Builder<Assignment> resultAssignments = ImmutableList.builder();
+        ImmutableList.Builder<FederationColumnHandle> newColumns = ImmutableList.builder();
+        newColumns.addAll(handle.columns());
+        for (int index = 0; index < aggregates.size(); index++) {
+            String outputName = "$agg_" + index;
+            if (existingNames.contains(outputName)) {
+                return Optional.empty();
+            }
+            Optional<FederationAggregateColumn> aggregateColumn = toAggregateColumn(aggregates.get(index), assignments, outputName);
+            if (aggregateColumn.isEmpty()) {
+                return Optional.empty();
+            }
+            Type outputType = aggregateColumn.get().outputType();
+            FederationColumnHandle syntheticColumn = new FederationColumnHandle(outputName, outputType, false);
+            aggregateColumns.add(aggregateColumn.get());
+            newColumns.add(syntheticColumn);
+            projections.add(new Variable(outputName, outputType));
+            resultAssignments.add(new Assignment(outputName, syntheticColumn, outputType));
+        }
+
+        FederationTableHandle newHandle = handle
+                .withColumns(newColumns.build())
+                .withAggregation(new FederationAggregation(groupingColumns, aggregateColumns.build()));
+        return Optional.of(new AggregationApplicationResult<>(
+                newHandle,
+                projections.build(),
+                resultAssignments.build(),
+                ImmutableMap.of(),
+                false));
+    }
+
+    private static Optional<FederationAggregateColumn> toAggregateColumn(AggregateFunction function, Map<String, ColumnHandle> assignments, String outputName)
+    {
+        if (function.isDistinct() || function.getFilter().isPresent() || !function.getSortItems().isEmpty()) {
+            return Optional.empty();
+        }
+        if (function.getFunctionName().equals("count") && function.getArguments().isEmpty()) {
+            return validated(function, new FederationAggregateColumn(Optional.empty(), outputName, BIGINT, CombineKind.COUNT_SUM));
+        }
+        if (function.getArguments().size() != 1 || !(function.getArguments().getFirst() instanceof Variable variable)) {
+            return Optional.empty();
+        }
+        FederationColumnHandle argument = (FederationColumnHandle) assignments.get(variable.getName());
+        if (argument == null || argument.regionColumn() || !RemoteSqlBuilder.isPushableType(argument.type())) {
+            return Optional.empty();
+        }
+        Optional<FederationAggregateColumn> column = switch (function.getFunctionName()) {
+            case "count" -> Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, BIGINT, CombineKind.COUNT_SUM));
+            case "sum" -> sumColumn(argument, outputName);
+            case "min" -> Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, argument.type(), CombineKind.MIN));
+            case "max" -> Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, argument.type(), CombineKind.MAX));
+            case "avg" -> avgColumn(argument, outputName);
+            default -> Optional.empty();
+        };
+        return column.flatMap(value -> validated(function, value));
+    }
+
+    private static Optional<FederationAggregateColumn> validated(AggregateFunction function, FederationAggregateColumn column)
+    {
+        if (!function.getOutputType().equals(column.outputType())) {
+            return Optional.empty();
+        }
+        return Optional.of(column);
+    }
+
+    private static Optional<FederationAggregateColumn> sumColumn(FederationColumnHandle argument, String outputName)
+    {
+        Type type = argument.type();
+        if (type.equals(TINYINT) || type.equals(SMALLINT) || type.equals(INTEGER) || type.equals(BIGINT)) {
+            return Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, BIGINT, CombineKind.SUM_LONG));
+        }
+        if (type.equals(REAL)) {
+            return Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, REAL, CombineKind.SUM_REAL));
+        }
+        if (type.equals(DOUBLE)) {
+            return Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, DOUBLE, CombineKind.SUM_DOUBLE));
+        }
+        if (type instanceof DecimalType decimalType) {
+            return Optional.of(new FederationAggregateColumn(
+                    Optional.of(argument),
+                    outputName,
+                    createDecimalType(MAX_PRECISION, decimalType.getScale()),
+                    CombineKind.SUM_DECIMAL));
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<FederationAggregateColumn> avgColumn(FederationColumnHandle argument, String outputName)
+    {
+        // avg over decimal must be exact and avg over integers is a double computed from the
+        // exact global sum and count; combining per-region partials cannot reproduce either,
+        // so only the floating-point forms are pushed
+        if (argument.type().equals(DOUBLE)) {
+            return Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, DOUBLE, CombineKind.AVG_DOUBLE));
+        }
+        if (argument.type().equals(REAL)) {
+            return Optional.of(new FederationAggregateColumn(Optional.of(argument), outputName, REAL, CombineKind.AVG_REAL));
+        }
+        return Optional.empty();
     }
 
     /**

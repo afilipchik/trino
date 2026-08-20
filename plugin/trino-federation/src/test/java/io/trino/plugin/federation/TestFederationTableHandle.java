@@ -20,7 +20,6 @@ import io.airlift.json.JsonCodec;
 import io.airlift.json.JsonCodecFactory;
 import io.airlift.json.JsonMapperProvider;
 import io.trino.block.BlockJsonSerde;
-import io.trino.plugin.federation.sql.AggregateKind;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SortOrder;
@@ -39,6 +38,7 @@ import static io.airlift.slice.Slices.utf8Slice;
 import static io.trino.metadata.InternalBlockEncodingSerde.TESTING_BLOCK_ENCODING_SERDE;
 import static io.trino.plugin.federation.FederationColumns.REGION_COLUMN;
 import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.VarcharType.createVarcharType;
 import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +48,7 @@ final class TestFederationTableHandle
 {
     private static final FederationColumnHandle ORDER_KEY = new FederationColumnHandle("orderkey", BIGINT, false);
     private static final FederationColumnHandle NAME = new FederationColumnHandle("name", createVarcharType(25), false);
+    private static final FederationColumnHandle PRICE = new FederationColumnHandle("price", DOUBLE, false);
 
     private final JsonCodec<FederationTableHandle> tableHandleCodec;
     private final JsonCodec<FederationColumnHandle> columnHandleCodec;
@@ -93,8 +94,9 @@ final class TestFederationTableHandle
         FederationAggregation aggregation = new FederationAggregation(
                 ImmutableList.of(NAME),
                 ImmutableList.of(
-                        new FederationAggregateColumn(AggregateKind.COUNT_ALL, Optional.empty(), "row_count", BIGINT, CombineKind.COUNT_SUM),
-                        new FederationAggregateColumn(AggregateKind.SUM, Optional.of(ORDER_KEY), "sum_orderkey", BIGINT, CombineKind.SUM_LONG)));
+                        new FederationAggregateColumn(Optional.empty(), "row_count", BIGINT, CombineKind.COUNT_SUM),
+                        new FederationAggregateColumn(Optional.of(ORDER_KEY), "sum_orderkey", BIGINT, CombineKind.SUM_LONG),
+                        new FederationAggregateColumn(Optional.of(PRICE), "avg_price", DOUBLE, CombineKind.AVG_DOUBLE)));
         FederationTopN topN = new FederationTopN(
                 ImmutableList.of(
                         new FederationSortColumn(ORDER_KEY, SortOrder.DESC_NULLS_LAST),
@@ -141,7 +143,7 @@ final class TestFederationTableHandle
         FederationTopN topN = new FederationTopN(ImmutableList.of(new FederationSortColumn(ORDER_KEY, SortOrder.ASC_NULLS_FIRST)), 5);
         FederationAggregation aggregation = new FederationAggregation(
                 ImmutableList.of(),
-                ImmutableList.of(new FederationAggregateColumn(AggregateKind.MAX, Optional.of(ORDER_KEY), "max_orderkey", BIGINT, CombineKind.MAX)));
+                ImmutableList.of(new FederationAggregateColumn(Optional.of(ORDER_KEY), "max_orderkey", BIGINT, CombineKind.MAX)));
 
         FederationTableHandle changed = handle
                 .withColumns(ImmutableList.of(ORDER_KEY, REGION_COLUMN))

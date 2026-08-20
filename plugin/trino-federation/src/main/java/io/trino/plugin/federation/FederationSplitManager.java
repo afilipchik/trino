@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.federation;
 
+import com.google.common.collect.ImmutableList;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplit;
@@ -26,7 +27,6 @@ import io.trino.spi.connector.FixedSplitSource;
 import java.util.List;
 import java.util.Set;
 
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 public class FederationSplitManager
@@ -41,7 +41,12 @@ public class FederationSplitManager
             Constraint constraint)
     {
         FederationTableHandle handle = (FederationTableHandle) table;
-        checkState(handle.aggregation().isEmpty(), "aggregated scans use a single fan-out split, not per-region splits");
+        if (handle.aggregation().isPresent()) {
+            // a single fan-out split queries all active regions concurrently and combines
+            // their partial aggregates; it exists even with no active regions, since a
+            // global aggregation still emits one row
+            return new FixedSplitSource(ImmutableList.of(new FederationAggregateSplit(handle.activeRegions())));
+        }
         List<ConnectorSplit> splits = handle.activeRegions().stream()
                 .map(region -> (ConnectorSplit) new FederationSplit(region))
                 .collect(toImmutableList());
