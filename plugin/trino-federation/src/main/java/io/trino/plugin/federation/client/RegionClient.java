@@ -112,7 +112,7 @@ public class RegionClient
      * Returns the ordered columns of a remote table. Columns with remote types the connector
      * does not support are still listed, with an empty Trino type, so callers can skip them.
      */
-    public List<RemoteColumn> describeTable(String schema, String table)
+    public List<RemoteColumnMetadata> describeTable(String schema, String table)
     {
         String sql = ("SELECT column_name, data_type FROM %s.information_schema.columns " +
                 "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position")
@@ -120,7 +120,7 @@ public class RegionClient
         return queryRows(sql).stream()
                 .map(row -> {
                     String remoteType = (String) row.get(1);
-                    return new RemoteColumn((String) row.get(0), remoteType, FederationTypeMapper.toTrinoType(remoteType));
+                    return new RemoteColumnMetadata((String) row.get(0), remoteType, FederationTypeMapper.toTrinoType(remoteType));
                 })
                 .collect(toImmutableList());
     }

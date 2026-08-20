@@ -256,16 +256,16 @@ final class TestRegionClient
     void testDescribeTable()
     {
         assertThat(tpchClient.describeTable("tiny", "nation")).containsExactly(
-                new RemoteColumn("nationkey", "bigint", Optional.of(BIGINT)),
-                new RemoteColumn("name", "varchar(25)", Optional.of(createVarcharType(25))),
-                new RemoteColumn("regionkey", "bigint", Optional.of(BIGINT)),
-                new RemoteColumn("comment", "varchar(152)", Optional.of(createVarcharType(152))));
+                new RemoteColumnMetadata("nationkey", "bigint", Optional.of(BIGINT)),
+                new RemoteColumnMetadata("name", "varchar(25)", Optional.of(createVarcharType(25))),
+                new RemoteColumnMetadata("regionkey", "bigint", Optional.of(BIGINT)),
+                new RemoteColumnMetadata("comment", "varchar(152)", Optional.of(createVarcharType(152))));
 
         assertThat(memoryClient.describeTable("default", "described")).containsExactly(
-                new RemoteColumn("id", "integer", Optional.of(INTEGER)),
-                new RemoteColumn("name", "varchar(10)", Optional.of(createVarcharType(10))),
-                new RemoteColumn("tags", "array(integer)", Optional.empty()),
-                new RemoteColumn("created", "timestamp(6)", Optional.of(createTimestampType(6))));
+                new RemoteColumnMetadata("id", "integer", Optional.of(INTEGER)),
+                new RemoteColumnMetadata("name", "varchar(10)", Optional.of(createVarcharType(10))),
+                new RemoteColumnMetadata("tags", "array(integer)", Optional.empty()),
+                new RemoteColumnMetadata("created", "timestamp(6)", Optional.of(createTimestampType(6))));
 
         assertThat(memoryClient.describeTable("default", "missing_table")).isEmpty();
     }

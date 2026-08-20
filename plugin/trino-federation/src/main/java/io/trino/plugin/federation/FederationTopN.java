@@ -11,25 +11,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.federation.client;
+package io.trino.plugin.federation;
 
-import io.trino.spi.type.Type;
+import com.google.common.collect.ImmutableList;
 
-import java.util.Optional;
+import java.util.List;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/**
- * A column of a remote table as reported by {@code information_schema.columns}. The Trino
- * type is empty when the remote type is not supported by the federation connector, so
- * metadata listing can skip the column instead of failing.
- */
-public record RemoteColumn(String name, String remoteType, Optional<Type> type)
+public record FederationTopN(List<FederationSortColumn> ordering, long count)
 {
-    public RemoteColumn
+    public FederationTopN
     {
-        requireNonNull(name, "name is null");
-        requireNonNull(remoteType, "remoteType is null");
-        requireNonNull(type, "type is null");
+        ordering = ImmutableList.copyOf(requireNonNull(ordering, "ordering is null"));
+        checkArgument(!ordering.isEmpty(), "ordering is empty");
+        checkArgument(count > 0, "count must be positive: %s", count);
     }
 }
