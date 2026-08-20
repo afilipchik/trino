@@ -1,9 +1,9 @@
 ---
 name: trino-federation
-status: backlog
+status: completed
 created: 2026-08-20T03:40:23Z
-updated: 2026-08-20T03:40:23Z
-progress: 30%
+updated: 2026-08-20T06:44:44Z
+progress: 100%
 prd: .claude/prds/trino-federation.md
 github: (local only — origin is upstream trinodb/trino, no issue sync)
 ---
@@ -137,13 +137,13 @@ aggregate shapes are deferred.
 - [x] 001.md - Plugin skeleton, config, and registration (parallel: false)
 - [x] 002.md - RegionClient — Trino client protocol wrapper and type mapping (parallel: true)
 - [x] 003.md - RemoteSqlBuilder — regional SQL generation (parallel: true)
-- [ ] 004.md - Metadata, handles, and _region column (parallel: false)
-- [ ] 005.md - Scan path — splits and streaming page source (parallel: false)
-- [ ] 006.md - Scan pushdowns — filter, projection, limit, TopN, region pruning (parallel: false)
-- [ ] 007.md - Aggregation pushdown with connector-side combine (parallel: false)
-- [ ] 008.md - Multi-cluster integration test suite (parallel: true)
-- [ ] 009.md - Documentation and repo validation (parallel: true)
-- [ ] 010.md - Kind demo — central + regional clusters (parallel: true)
+- [x] 004.md - Metadata, handles, and _region column (parallel: false)
+- [x] 005.md - Scan path — splits and streaming page source (parallel: false)
+- [x] 006.md - Scan pushdowns — filter, projection, limit, TopN, region pruning (parallel: false)
+- [x] 007.md - Aggregation pushdown with connector-side combine (parallel: false)
+- [x] 008.md - Multi-cluster integration test suite (parallel: true)
+- [x] 009.md - Documentation and repo validation (parallel: true)
+- [x] 010.md - Kind demo — central + regional clusters (parallel: true)
 
 Total tasks: 10
 Parallel tasks: 5 (002+003 after 001; 008+009+010 after 007)
