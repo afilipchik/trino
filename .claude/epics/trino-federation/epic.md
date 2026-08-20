@@ -3,7 +3,7 @@ name: trino-federation
 status: backlog
 created: 2026-08-20T03:40:23Z
 updated: 2026-08-20T03:40:23Z
-progress: 0%
+progress: 30%
 prd: .claude/prds/trino-federation.md
 github: (local only — origin is upstream trinodb/trino, no issue sync)
 ---
@@ -134,9 +134,9 @@ task 7 (aggregation combine); its fallback path keeps the connector shippable ev
 aggregate shapes are deferred.
 
 ## Tasks Created
-- [ ] 001.md - Plugin skeleton, config, and registration (parallel: false)
-- [ ] 002.md - RegionClient — Trino client protocol wrapper and type mapping (parallel: true)
-- [ ] 003.md - RemoteSqlBuilder — regional SQL generation (parallel: true)
+- [x] 001.md - Plugin skeleton, config, and registration (parallel: false)
+- [x] 002.md - RegionClient — Trino client protocol wrapper and type mapping (parallel: true)
+- [x] 003.md - RemoteSqlBuilder — regional SQL generation (parallel: true)
 - [ ] 004.md - Metadata, handles, and _region column (parallel: false)
 - [ ] 005.md - Scan path — splits and streaming page source (parallel: false)
 - [ ] 006.md - Scan pushdowns — filter, projection, limit, TopN, region pruning (parallel: false)

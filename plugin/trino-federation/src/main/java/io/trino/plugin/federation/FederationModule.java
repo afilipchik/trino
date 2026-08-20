@@ -16,6 +16,7 @@ package io.trino.plugin.federation;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
+import io.trino.plugin.federation.client.RegionClients;
 
 import static io.airlift.configuration.ConfigBinder.configBinder;
 
@@ -26,6 +27,7 @@ public class FederationModule
     public void configure(Binder binder)
     {
         configBinder(binder).bindConfig(FederationConfig.class);
+        binder.bind(RegionClients.class).in(Scopes.SINGLETON);
         binder.bind(FederationMetadata.class).in(Scopes.SINGLETON);
         binder.bind(FederationSplitManager.class).in(Scopes.SINGLETON);
         binder.bind(FederationPageSourceProvider.class).in(Scopes.SINGLETON);
