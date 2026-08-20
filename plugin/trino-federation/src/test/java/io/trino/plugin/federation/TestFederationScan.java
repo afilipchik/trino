@@ -199,8 +199,8 @@ final class TestFederationScan
     @Test
     void testLimitCompletes()
     {
-        // LIMIT is not pushed down yet: the engine closes the page sources after the first
-        // row, which must cancel the remote regional queries instead of hanging
+        // the engine closes the page sources once its final LIMIT is satisfied, which must
+        // cancel any still-running remote regional queries instead of hanging
         assertThat(runner.execute("SELECT id FROM orders LIMIT 1").getRowCount()).isEqualTo(1);
     }
 }

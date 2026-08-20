@@ -42,6 +42,7 @@ import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.createVarcharType;
 import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 final class TestFederationTableHandle
 {
@@ -104,11 +105,27 @@ final class TestFederationTableHandle
                 ImmutableList.of(ORDER_KEY, NAME, REGION_COLUMN),
                 ImmutableList.of("region-a"),
                 constraint,
-                OptionalLong.of(100),
+                OptionalLong.empty(),
                 Optional.of(topN),
                 Optional.of(aggregation));
 
         assertThat(tableHandleCodec.fromJson(tableHandleCodec.toJson(handle))).isEqualTo(handle);
+    }
+
+    @Test
+    void testLimitAndTopNAreMutuallyExclusive()
+    {
+        FederationTopN topN = new FederationTopN(ImmutableList.of(new FederationSortColumn(ORDER_KEY, SortOrder.ASC_NULLS_FIRST)), 5);
+        assertThatThrownBy(() -> new FederationTableHandle(
+                new SchemaTableName("tiny", "orders"),
+                ImmutableList.of(ORDER_KEY, REGION_COLUMN),
+                ImmutableList.of("region-a"),
+                TupleDomain.all(),
+                OptionalLong.of(10),
+                Optional.of(topN),
+                Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mutually exclusive");
     }
 
     @Test
@@ -131,7 +148,6 @@ final class TestFederationTableHandle
                 .withActiveRegions(ImmutableList.of("region-b"))
                 .withConstraint(constraint)
                 .withLimit(7)
-                .withTopN(topN)
                 .withAggregation(aggregation);
 
         assertThat(changed.schemaTableName()).isEqualTo(handle.schemaTableName());
@@ -139,11 +155,17 @@ final class TestFederationTableHandle
         assertThat(changed.activeRegions()).containsExactly("region-b");
         assertThat(changed.constraint()).isEqualTo(constraint);
         assertThat(changed.limit()).isEqualTo(OptionalLong.of(7));
-        assertThat(changed.topN()).contains(topN);
+        assertThat(changed.topN()).isEmpty();
         assertThat(changed.aggregation()).contains(aggregation);
         assertThat(handle.constraint().isAll()).isTrue();
 
         assertThat(tableHandleCodec.fromJson(tableHandleCodec.toJson(changed))).isEqualTo(changed);
+
+        FederationTableHandle sorted = changed.withTopN(topN);
+        assertThat(sorted.topN()).contains(topN);
+        assertThat(sorted.limit()).isEmpty();
+
+        assertThat(tableHandleCodec.fromJson(tableHandleCodec.toJson(sorted))).isEqualTo(sorted);
     }
 
     @Test

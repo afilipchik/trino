@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -54,6 +55,7 @@ public record FederationTableHandle(
         requireNonNull(limit, "limit is null");
         requireNonNull(topN, "topN is null");
         requireNonNull(aggregation, "aggregation is null");
+        checkArgument(limit.isEmpty() || topN.isEmpty(), "limit and topN are mutually exclusive");
     }
 
     public static FederationTableHandle of(SchemaTableName schemaTableName, List<FederationColumnHandle> columns, List<String> activeRegions)
@@ -88,9 +90,13 @@ public record FederationTableHandle(
         return new FederationTableHandle(schemaTableName, columns, activeRegions, constraint, OptionalLong.of(limit), topN, aggregation);
     }
 
+    /**
+     * Sets the TopN and drops any previously pushed plain limit: TopN supersedes it, and the
+     * regional SQL cannot carry both.
+     */
     public FederationTableHandle withTopN(FederationTopN topN)
     {
-        return new FederationTableHandle(schemaTableName, columns, activeRegions, constraint, limit, Optional.of(topN), aggregation);
+        return new FederationTableHandle(schemaTableName, columns, activeRegions, constraint, OptionalLong.empty(), Optional.of(topN), aggregation);
     }
 
     public FederationTableHandle withAggregation(FederationAggregation aggregation)

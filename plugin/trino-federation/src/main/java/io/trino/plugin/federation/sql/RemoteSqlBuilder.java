@@ -130,6 +130,27 @@ public final class RemoteSqlBuilder
         return new RemoteQuery(sql.toString(), outputColumns, unsupportedFilterColumns.build());
     }
 
+    /**
+     * Whether values of this type can be rendered by this builder at all, and therefore
+     * whether the type is accepted in pushed-down ORDER BY items.
+     */
+    public static boolean isPushableType(Type type)
+    {
+        return isSupportedType(requireNonNull(type, "type is null"));
+    }
+
+    /**
+     * Whether {@link #buildSql} renders this domain as a WHERE conjunct instead of reporting
+     * its column in {@link RemoteQuery#unsupportedFilterColumns()}. Runs the same rendering
+     * code as {@link #buildSql}, so the two cannot diverge.
+     */
+    public static boolean isPushableDomain(Type type, Domain domain)
+    {
+        requireNonNull(type, "type is null");
+        requireNonNull(domain, "domain is null");
+        return domain.isAll() || tryRenderPredicate(new RemoteColumn("$probe", type), domain).isPresent();
+    }
+
     private static List<RemoteColumn> outputColumns(List<RemoteColumn> projections, Optional<AggregationSpec> aggregation)
     {
         if (aggregation.isPresent()) {
@@ -198,18 +219,28 @@ public final class RemoteSqlBuilder
             if (domain.isAll()) {
                 continue;
             }
-            if (!isSupportedType(column.type())) {
-                unsupportedFilterColumns.add(column);
-                continue;
+            Optional<String> predicate = tryRenderPredicate(column, domain);
+            if (predicate.isPresent()) {
+                conjuncts.add(predicate.get());
             }
-            try {
-                conjuncts.add(toPredicate(column, domain));
-            }
-            catch (UnsupportedPushdownException ignored) {
+            else {
                 unsupportedFilterColumns.add(column);
             }
         }
         return conjuncts.build();
+    }
+
+    private static Optional<String> tryRenderPredicate(RemoteColumn column, Domain domain)
+    {
+        if (!isSupportedType(column.type())) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(toPredicate(column, domain));
+        }
+        catch (UnsupportedPushdownException ignored) {
+            return Optional.empty();
+        }
     }
 
     private static String toPredicate(RemoteColumn column, Domain domain)

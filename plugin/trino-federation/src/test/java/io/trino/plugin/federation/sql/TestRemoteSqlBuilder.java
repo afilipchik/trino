@@ -344,6 +344,60 @@ final class TestRemoteSqlBuilder
     }
 
     @Test
+    void testIsPushableType()
+    {
+        assertThat(RemoteSqlBuilder.isPushableType(BOOLEAN)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(BIGINT)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(REAL)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(DOUBLE)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(VARCHAR)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(VARBINARY)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(DATE)).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(createDecimalType(10, 2))).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(createTimeType(3))).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableType(createTimestampType(3))).isTrue();
+
+        assertThat(RemoteSqlBuilder.isPushableType(new ArrayType(INTEGER))).isFalse();
+        assertThat(RemoteSqlBuilder.isPushableType(COLOR)).isFalse();
+    }
+
+    @Test
+    void testIsPushableDomainMatchesBuildSql()
+    {
+        // domains buildSql renders as WHERE conjuncts
+        assertPushability(INTEGER, Domain.multipleValues(INTEGER, ImmutableList.of(1L, 2L)), true);
+        assertPushability(INTEGER, domain(Range.greaterThan(INTEGER, 5L)), true);
+        assertPushability(INTEGER, Domain.onlyNull(INTEGER), true);
+        assertPushability(INTEGER, Domain.notNull(INTEGER), true);
+        assertPushability(VARCHAR, Domain.singleValue(VARCHAR, utf8Slice("x")), true);
+        assertPushability(DOUBLE, Domain.singleValue(DOUBLE, 1.5), true);
+
+        // domains buildSql reports as unsupported filter columns
+        assertPushability(new ArrayType(INTEGER), Domain.onlyNull(new ArrayType(INTEGER)), false);
+        assertPushability(COLOR, Domain.create(ValueSet.of(COLOR, 1L), false), false);
+        assertPushability(DOUBLE, Domain.singleValue(DOUBLE, Double.POSITIVE_INFINITY), false);
+        assertPushability(DOUBLE, domain(Range.range(DOUBLE, 1.0, true, Double.POSITIVE_INFINITY, true)), false);
+        assertPushability(REAL, Domain.singleValue(REAL, (long) floatToRawIntBits(Float.NEGATIVE_INFINITY)), false);
+    }
+
+    @Test
+    void testAllDomainIsPushable()
+    {
+        assertThat(RemoteSqlBuilder.isPushableDomain(INTEGER, Domain.all(INTEGER))).isTrue();
+        assertThat(RemoteSqlBuilder.isPushableDomain(new ArrayType(INTEGER), Domain.all(new ArrayType(INTEGER)))).isTrue();
+    }
+
+    private static void assertPushability(Type type, Domain domain, boolean expected)
+    {
+        assertThat(RemoteSqlBuilder.isPushableDomain(type, domain)).isEqualTo(expected);
+        RemoteColumn column = column("c", type);
+        RemoteQuery query = buildScan(
+                ImmutableList.of(column("a", INTEGER)),
+                TupleDomain.withColumnDomains(ImmutableMap.of(column, domain)));
+        assertThat(query.unsupportedFilterColumns().isEmpty()).isEqualTo(expected);
+    }
+
+    @Test
     void testGlobalAggregation()
     {
         RemoteQuery query = buildAggregation(new AggregationSpec(
